@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sync: overlap up to four manifest metadata reads while retaining deterministic membership, scope checks, and fresh metadata on every build.
+
 - Images: preserve Linux smoke and cleanup exit status when login-shell logout hooks fail during minting or retained-image qualification.
 - Images: include checksum-pinned Rust/Cargo and uv/uvx in Linux x86_64 developer images, with nonroot offline build and Python-tool smoke checks.
 

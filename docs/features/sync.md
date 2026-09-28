@@ -318,7 +318,12 @@ Once ownership is established, sync runs these steps:
 9. rsync the working set with `--files-from=- --from0` (the manifest drives the
    transfer).
 10. Finalize: git-hydrate the worktree against the configured base ref, run the
-    mass-deletion sanity check, and record the new fingerprint.
+   mass-deletion sanity check, and record the new fingerprint.
+
+Manifest projection overlaps up to four independent file-metadata reads.
+Each worker checks the same include, exclude, Gitlink, and managed-state scope
+and owns its directory-identity cache. Results retain deterministic ordering;
+metadata is not reused across builds or substituted for content verification.
 
 The remote prune in step 8 only removes paths Crabbox previously synced. It does
 not touch workflow-created state, package caches, `.git`, or any other runner

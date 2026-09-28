@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Repo struct {
@@ -1122,28 +1123,62 @@ func prepareSyncManifestRoot(root string, excludes SyncExcludeRules) (*managedSy
 }
 
 func projectSyncManifest(root string, excludes SyncExcludeRules, includes, paths []string, scope syncManifestScope, managed *managedSyncScope) (SyncManifest, map[string]bool, error) {
+	return projectSyncManifestWithStat(root, excludes, includes, paths, scope, managed, os.Lstat)
+}
+
+func projectSyncManifestWithStat(root string, excludes SyncExcludeRules, includes, paths []string, scope syncManifestScope, managed *managedSyncScope, stat func(string) (os.FileInfo, error)) (SyncManifest, map[string]bool, error) {
 	trackedRegular, gitlinkPaths := scope.trackedRegular, scope.gitlinkPaths
+	type projectedPath struct {
+		rel, protectedPattern string
+		info                  os.FileInfo
+		err                   error
+	}
+	results := make([]projectedPath, len(paths))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(4, len(paths)) {
+		workers.Go(func() {
+			// Directory identity caches belong to one worker; no metadata survives
+			// this manifest build or replaces the existing per-path scope check.
+			localManaged := *managed
+			localManaged.parents = make(map[string]managedSyncParent)
+			for index := range jobs {
+				rel := filepath.ToSlash(paths[index])
+				protected, err := localManaged.contains(rel)
+				if err != nil {
+					results[index].err = err
+					continue
+				}
+				if protected {
+					continue
+				}
+				_, tracked := trackedRegular[rel]
+				excluded, pattern := pathExcludeDecision(rel, excludes, tracked)
+				if _, gitlink := gitlinkPaths[rel]; gitlink || !safeRepoRel(rel) || excluded || !pathIncluded(rel, includes) {
+					continue
+				}
+				info, err := stat(filepath.Join(root, filepath.FromSlash(rel)))
+				if err == nil && !info.IsDir() {
+					results[index] = projectedPath{rel: rel, protectedPattern: pattern, info: info}
+				}
+			}
+		})
+	}
+	for index := range paths {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
 	seen := map[string]bool{}
 	manifest := SyncManifest{}
-	for _, rel := range paths {
-		rel = filepath.ToSlash(rel)
-		protected, err := managed.contains(rel)
-		if err != nil {
-			return SyncManifest{}, nil, err
+	for _, result := range results {
+		if result.err != nil {
+			return SyncManifest{}, nil, result.err
 		}
-		if protected {
+		if result.info == nil || seen[result.rel] {
 			continue
 		}
-		_, isTrackedRegular := trackedRegular[rel]
-		excluded, protectedPattern := pathExcludeDecision(rel, excludes, isTrackedRegular)
-		if _, isGitlink := gitlinkPaths[rel]; isGitlink || !safeRepoRel(rel) || excluded || !pathIncluded(rel, includes) || seen[rel] {
-			continue
-		}
-		full := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Lstat(full)
-		if err != nil || info.IsDir() {
-			continue
-		}
+		rel, info, protectedPattern := result.rel, result.info, result.protectedPattern
 		seen[rel] = true
 		manifest.Files = append(manifest.Files, rel)
 		manifest.Bytes += info.Size()
