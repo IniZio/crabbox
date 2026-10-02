@@ -2559,10 +2559,10 @@ func TestAWSConfigShowCompletePassiveSection(t *testing.T) {
 		want  map[string]any
 		text  string
 	}{
-		{name: "nil", input: core.Config{}, want: map[string]any{"region": "", "ami": "", "securityGroupId": "", "subnetId": "", "instanceProfile": "", "rootGB": int32(0), "sshCIDRs": []string(nil)}, text: "aws region= root_gb=0 ssh_cidrs=-\n"},
-		{name: "empty", input: core.Config{AWSSSHCIDRs: []string{}}, want: map[string]any{"region": "", "ami": "", "securityGroupId": "", "subnetId": "", "instanceProfile": "", "rootGB": int32(0), "sshCIDRs": []string{}}, text: "aws region= root_gb=0 ssh_cidrs=-\n"},
-		{name: "raw-references-list", input: core.Config{AWSRegion: "raw-region", AWSAMI: "image-reference", AWSSGID: "group-reference", AWSSubnetID: "subnet-reference", AWSProfile: "guest-profile-reference", AWSRootGB: 2147483647, AWSSSHCIDRs: []string{"second", "first", "second", " "}}, want: map[string]any{"region": "raw-region", "ami": "image-reference", "securityGroupId": "group-reference", "subnetId": "subnet-reference", "instanceProfile": "guest-profile-reference", "rootGB": int32(2147483647), "sshCIDRs": []string{"second", "first", "second", " "}}, text: "aws region=raw-region root_gb=2147483647 ssh_cidrs=second,first,second, \n"},
-		{name: "whitespace-empty-elements", input: core.Config{AWSRegion: " ", AWSAMI: " ", AWSSGID: " ", AWSSubnetID: " ", AWSProfile: " ", AWSRootGB: -1, AWSSSHCIDRs: []string{"", ""}}, want: map[string]any{"region": " ", "ami": " ", "securityGroupId": " ", "subnetId": " ", "instanceProfile": " ", "rootGB": int32(-1), "sshCIDRs": []string{"", ""}}, text: "aws region=  root_gb=-1 ssh_cidrs=,\n"},
+		{name: "nil", input: core.Config{}, want: map[string]any{"stockImage": false, "region": "", "ami": "", "securityGroupId": "", "subnetId": "", "instanceProfile": "", "rootGB": int32(0), "sshCIDRs": []string(nil)}, text: "aws region= root_gb=0 ssh_cidrs=-\n"},
+		{name: "empty", input: core.Config{AWSSSHCIDRs: []string{}}, want: map[string]any{"stockImage": false, "region": "", "ami": "", "securityGroupId": "", "subnetId": "", "instanceProfile": "", "rootGB": int32(0), "sshCIDRs": []string{}}, text: "aws region= root_gb=0 ssh_cidrs=-\n"},
+		{name: "raw-references-list", input: core.Config{AWSRegion: "raw-region", AWSAMI: "image-reference", AWSSGID: "group-reference", AWSSubnetID: "subnet-reference", AWSProfile: "guest-profile-reference", AWSRootGB: 2147483647, AWSSSHCIDRs: []string{"second", "first", "second", " "}}, want: map[string]any{"stockImage": false, "region": "raw-region", "ami": "image-reference", "securityGroupId": "group-reference", "subnetId": "subnet-reference", "instanceProfile": "guest-profile-reference", "rootGB": int32(2147483647), "sshCIDRs": []string{"second", "first", "second", " "}}, text: "aws region=raw-region root_gb=2147483647 ssh_cidrs=second,first,second, \n"},
+		{name: "whitespace-empty-elements", input: core.Config{AWSRegion: " ", AWSAMI: " ", AWSSGID: " ", AWSSubnetID: " ", AWSProfile: " ", AWSRootGB: -1, AWSSSHCIDRs: []string{"", ""}}, want: map[string]any{"stockImage": false, "region": " ", "ami": " ", "securityGroupId": " ", "subnetId": " ", "instanceProfile": " ", "rootGB": int32(-1), "sshCIDRs": []string{"", ""}}, text: "aws region=  root_gb=-1 ssh_cidrs=,\n"},
 	} {
 		for _, selected := range []string{"aws", "static"} {
 			t.Run(tc.name+"/"+selected, func(t *testing.T) {
@@ -2574,7 +2574,7 @@ func TestAWSConfigShowCompletePassiveSection(t *testing.T) {
 				if section.JSONKey != "aws" || section.TextLabel != "aws" || !reflect.DeepEqual(section.Providers, []string{"aws"}) {
 					t.Fatalf("section metadata=%#v", section)
 				}
-				wantOrder := []string{"region", "ami", "securityGroupId", "subnetId", "instanceProfile", "rootGB", "sshCIDRs"}
+				wantOrder := []string{"region", "ami", "stockImage", "securityGroupId", "subnetId", "instanceProfile", "rootGB", "sshCIDRs"}
 				if len(section.Fields) != len(wantOrder) {
 					t.Fatalf("field count=%d want %d", len(section.Fields), len(wantOrder))
 				}
@@ -2631,5 +2631,29 @@ func TestAWSFixedAcquirePreservesLegacyRootDefault(t *testing.T) {
 	drift := NewAWSLeaseBackend(core.ProviderSpec{}, cfg, core.Runtime{Stderr: io.Discard}).(*awsLeaseBackend)
 	if _, err := drift.Acquire(context.Background(), req); err == nil || !strings.Contains(err.Error(), "lease_id_conflict") {
 		t.Fatalf("explicit root drift: %v", err)
+	}
+}
+
+func TestAWSStockImageRequiresBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		coordinator string
+		mode        core.BrokerMode
+		allowed     bool
+	}{
+		{"direct", "", core.BrokerModeManaged, false},
+		{"managed", "https://coordinator.example", core.BrokerModeManaged, true},
+		{"registered direct", "https://coordinator.example", core.BrokerModeRegistered, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (Provider{}).Configure(core.Config{AWSStockImage: true, Coordinator: tc.coordinator, BrokerMode: tc.mode}, core.Runtime{})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("brokered stock source rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "requires brokered AWS") {
+				t.Fatalf("stock source must not silently use direct image selection: %v", err)
+			}
+		})
 	}
 }
