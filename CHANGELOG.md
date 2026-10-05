@@ -15,6 +15,8 @@
 
 ### Fixes
 
+- Bound runner synchronization history reads and pending writes while preserving complete stale responses, legacy identities, and retry behavior. [PR 2695](https://github.com/openclaw/crabbox/pull/2695). Thanks @shakkernerd.
+
 - Prevent queued coordinator uploads from retaining every run log in memory, page run-event reads at storage, and return structured failures for interrupted event appends instead of uncaught Worker errors.
 - Buffer POSIX sync manifest writes, time out rsync only after I/O inactivity, and retain workspace-witness stop requests when interrupted transfers are still settling. [PR 2692](https://github.com/openclaw/crabbox/pull/2692).
 - Return a retryable 503 when coordinator lease creates cannot begin committing admission within 30 seconds instead of hanging. [PR 2687](https://github.com/openclaw/crabbox/pull/2687); related [Issue 1561](https://github.com/openclaw/crabbox/issues/1561).
