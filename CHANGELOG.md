@@ -12,6 +12,10 @@
 - Keep lease reads, heartbeats, and releases responsive during maintenance history discovery by releasing the lifecycle mutex and Cloudflare storage input gate while scanning candidates; retain fenced rereads before mutations.
 - Keep the homepage workload router's Copy button fully visible for short command snippets. [PR 2703](https://github.com/openclaw/crabbox/pull/2703). Thanks @shakkernerd.
 
+### Changes
+
+- Refresh the docs against the current CLI and provider catalog, including a single guide to desktop, VNC, browser and portal access.
+
 ## 0.71.0 - 2026-10-04
 
 ### Highlights
@@ -45,6 +49,7 @@
 ### Changes
 
 - Rewrite the README around on-demand computers for agents, with every supported provider listed.
+- Refresh the docs against the current CLI and provider catalog, including a single guide to desktop, VNC, browser and portal access.
 
 ### Fixes
 
