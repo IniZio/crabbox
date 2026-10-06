@@ -566,6 +566,10 @@ const providerReconciliationCandidatePrefix = "provider-reconciliation:";
 const providerReconciliationCircuitPrefix = "provider-reconciliation-circuit:";
 const awsIngressReconcileRecordKey = "aws-ingress-reconcile:pending";
 const awsIngressReconcileMinDelayMs = 1000;
+// Only repeated maintenance-tail debt is paced; requests and durable provisioning keep their wakes.
+const maintenanceAlarmDueEpsilonMs = 10;
+const maintenanceAlarmBackoffInitialMs = 1000;
+const maintenanceAlarmBackoffMaxMs = 60_000;
 const azureDeferredCleanupPrefix = "azure-cleanup:";
 const readyPoolPrefix = "ready-pool:";
 const readyPoolDesiredPrefix = "ready-pool-desired:";
@@ -1208,6 +1212,8 @@ export class FleetCoordinator {
   private readonly webVNCCredentialHandoffs: WebVNCCredentialHandoffs;
   private readonly leaseProvisioning: LeaseProvisioningController;
   private maintenanceRun: Promise<void> | undefined;
+  private alarmArmRevision = 0;
+  private maintenanceAlarmStreak: { source: string; key: string; delayMs: number } | undefined;
   private maintenanceFollowup: { grantVersion?: string; preserve: boolean } | undefined;
 
   constructor(
@@ -3292,6 +3298,7 @@ export class FleetCoordinator {
     forwardedAdminGrantVersion?: string,
     preserveForwardedVersion = false,
   ): Promise<void> {
+    const alarmArmRevision = this.alarmArmRevision;
     if (!(await this.restoredBridgesReady())) {
       throw new Error("restored bridge lease state is temporarily unavailable");
     }
@@ -3334,7 +3341,7 @@ export class FleetCoordinator {
     await this.runAWSOrphanSweepIfDue("alarm");
     await this.runAzureOrphanSweepIfDue("alarm");
     await this.reconcileAWSIngressIfIdle();
-    await this.state.runExclusive(() => this.scheduleAlarm());
+    await this.state.runExclusive(() => this.scheduleAlarm(alarmArmRevision));
   }
 
   private async scheduledMaintenance(request: Request): Promise<Response> {
@@ -5735,17 +5742,20 @@ export class FleetCoordinator {
     return { record, lease };
   }
 
-  private async maintainWorkspacePrewarm(): Promise<void> {
+  private workspacePrewarmTarget(): number {
     const configuredWorkspaceProvider = workspaceProvider(this.env.CRABBOX_WORKSPACE_PROVIDER);
     const privateAWSMode = awsPrivateWorkspaceModeEnabled(this.env);
     const workspaceProviderCapability = privateAWSMode
       ? undefined
       : this.provider(configuredWorkspaceProvider).workspaceCapability?.();
-    const count =
-      privateAWSMode ||
+    return privateAWSMode ||
       (workspaceProviderCapability && !workspaceProviderCapability.supportsPrewarm)
-        ? 0
-        : workspacePrewarmCount(this.env.CRABBOX_WORKSPACE_PREWARM_COUNT);
+      ? 0
+      : workspacePrewarmCount(this.env.CRABBOX_WORKSPACE_PREWARM_COUNT);
+  }
+
+  private async maintainWorkspacePrewarm(): Promise<void> {
+    const count = this.workspacePrewarmTarget();
     await this.state.runExclusive(async () => {
       const now = Date.now();
       const templates = new Map<string, WorkspaceRecord>();
@@ -12141,21 +12151,23 @@ export class FleetCoordinator {
     );
   }
 
-  private async webVNCPortalViewerAlarmTimes(now = Date.now()): Promise<number[]> {
-    const alarmTimes: number[] = [];
+  private async webVNCPortalViewerAlarms(
+    now = Date.now(),
+  ): Promise<Array<{ key: string; time: number }>> {
+    const alarms: Array<{ key: string; time: number }> = [];
     await Promise.all(
       [webVNCPortalViewerTicketPrefix(), webVNCPortalViewerSessionPrefix()].map(async (prefix) => {
         await this.visitStorageRecords<
           WebVNCPortalViewerTicketRecord | WebVNCPortalViewerSessionRecord
-        >(prefix, (record) => {
+        >(prefix, (record, key) => {
           const time = Date.parse(record.expiresAt);
           if (Number.isFinite(time) && time > now) {
-            alarmTimes.push(time);
+            alarms.push({ key, time });
           }
         });
       }),
     );
-    return alarmTimes;
+    return alarms;
   }
 
   private async portalLogout(request: Request): Promise<Response> {
@@ -17797,62 +17809,78 @@ export class FleetCoordinator {
     const current = await this.state.getAlarm();
     // A due timestamp can outlive its consumed runtime job, so re-arm without postponing it.
     if (current === undefined || current <= Date.now() || deadline < current) {
+      this.alarmArmRevision += 1;
       await this.state.scheduleAlarm(
         current === undefined ? deadline : Math.min(current, deadline),
       );
     }
   }
 
-  private async scheduleAlarm(): Promise<void> {
+  private async scheduleAlarm(maintenanceArmRevision?: number): Promise<void> {
+    if (maintenanceArmRevision === undefined) this.alarmArmRevision += 1;
     const now = Date.now();
-    let alarmTime: number | undefined;
-    const retainAlarm = (candidate: number | undefined) => {
+    const candidates: Array<{ time: number; dueAt: number; source: string; key: string }> = [];
+    const retainAlarm = (
+      candidate: number | undefined,
+      source: string,
+      key: string,
+      dueAt?: number,
+    ) => {
       if (candidate === undefined || !Number.isFinite(candidate)) {
         return;
       }
-      alarmTime = alarmTime === undefined ? candidate : Math.min(alarmTime, candidate);
+      candidates.push({ time: candidate, dueAt: dueAt ?? candidate, source, key });
     };
-    const prewarmEnabled = workspacePrewarmCount(this.env.CRABBOX_WORKSPACE_PREWARM_COUNT) > 0;
-    const activeWorkspaceOrgs = new Set<string>();
-    await this.visitStorageRecords<WorkspaceRecord>("workspace:", async (workspace) => {
+    const prewarmEnabled = this.workspacePrewarmTarget() > 0;
+    const activeWorkspaceShapes = new Set<string>();
+    await this.visitStorageRecords<WorkspaceRecord>("workspace:", async (workspace, key) => {
       const lease = await this.getLease(workspace.leaseID, { noCache: true });
       const reconcileAt = workspaceNextReconcileAt(workspace, lease, now);
       if (reconcileAt !== undefined) {
-        retainAlarm(Math.max(now + 1, reconcileAt));
+        retainAlarm(Math.max(now + 1, reconcileAt), "workspace-reconcile", key);
       }
       const terminalAt = workspaceTerminalTimestamp(workspace, lease);
       if (terminalAt !== undefined) {
-        retainAlarm(Math.max(now + 1, terminalAt + workspaceTerminalRetentionMs));
+        retainAlarm(
+          Math.max(now + 1, terminalAt + workspaceTerminalRetentionMs),
+          "workspace-retention",
+          key,
+        );
       }
-      if (!prewarmEnabled) {
+      if (!prewarmEnabled || !isCurrentOrgKey(workspace.org)) {
         return;
       }
       if (!workspace.prewarm) {
         const status = workspaceStatus(workspace, lease);
         if (status === "provisioning" || status === "ready") {
-          activeWorkspaceOrgs.add(workspace.org);
+          activeWorkspaceShapes.add(workspacePrewarmShape(workspace));
         }
         return;
       }
       if (!workspace.releaseRequestedAt && lease?.state === "active") {
         const replacementAt = Date.parse(lease.expiresAt) - workspacePrewarmReplacementLeadMs;
         if (replacementAt > now) {
-          retainAlarm(replacementAt);
+          retainAlarm(replacementAt, "prewarm-replacement", key);
         }
       }
     });
-    if (prewarmEnabled && activeWorkspaceOrgs.size > 0) {
-      await this.visitStorageRecords<WorkspaceRecord>("workspace:", async (workspace) => {
-        if (!workspace.prewarm || !activeWorkspaceOrgs.has(workspace.org)) {
+    if (prewarmEnabled && activeWorkspaceShapes.size > 0) {
+      await this.visitStorageRecords<WorkspaceRecord>("workspace:", async (workspace, key) => {
+        if (!workspace.prewarm || !activeWorkspaceShapes.has(workspacePrewarmShape(workspace))) {
           return;
         }
         const lease = await this.getLease(workspace.leaseID, { noCache: true });
-        if (!workspace.error && lease?.state !== "failed") {
+        if (
+          workspaceStatus(workspace, lease) !== "failed" &&
+          !workspace.error &&
+          lease?.state !== "failed"
+        ) {
           return;
         }
         const retryAt = Date.parse(workspace.updatedAt) + workspacePrewarmRetryDelayMs;
-        if (Number.isFinite(retryAt)) {
-          retainAlarm(Math.max(now + 1, retryAt));
+        // Once elapsed, retained failure history no longer blocks replacement.
+        if (Number.isFinite(retryAt) && retryAt > now) {
+          retainAlarm(retryAt, "prewarm-retry", key);
         }
       });
     }
@@ -17876,21 +17904,29 @@ export class FleetCoordinator {
         leaseNeedsCleanup(lease, now) ||
         leaseMayNeedInterruptedProvisioningRecovery(lease)
       ) {
-        retainAlarm(nextLeaseAlarmTime(lease, this.coordinatorGeneration));
+        // Match expireLeases: the durable controller owns both progress and its wake.
+        if (await provisioningOwnsLease(this.state.storage, lease.id)) return;
+        const leaseAlarm = nextLeaseAlarmTime(lease, this.coordinatorGeneration);
+        retainAlarm(
+          leaseAlarm,
+          "lease",
+          leaseKey(lease.id),
+          Math.min(leaseAlarm ?? Infinity, runtimeAdapterDeleteDueAt(lease, now) ?? Infinity),
+        );
       }
     });
-    for (const handoffAlarm of await this.webVNCCredentialHandoffs.alarmTimes(now)) {
-      retainAlarm(handoffAlarm);
+    for (const handoffAlarm of await this.webVNCCredentialHandoffs.alarms(now)) {
+      retainAlarm(handoffAlarm.time, "webvnc-handoff", handoffAlarm.key);
     }
-    for (const viewerAlarm of await this.webVNCPortalViewerAlarmTimes(now)) {
-      retainAlarm(viewerAlarm);
+    for (const viewerAlarm of await this.webVNCPortalViewerAlarms(now)) {
+      retainAlarm(viewerAlarm.time, "webvnc-viewer", viewerAlarm.key);
     }
     await measureCreationStep("admission.ready_pool_check", async () => {
-      await this.visitStorageRecords<ReadyPoolEntry>(readyPoolPrefix, async (entry) => {
+      await this.visitStorageRecords<ReadyPoolEntry>(readyPoolPrefix, async (entry, key) => {
         if (entry.state === "busy") {
           const borrowDeadline = readyPoolBorrowDeadline(entry);
           if (borrowDeadline !== undefined) {
-            retainAlarm(Math.max(now + 1, borrowDeadline));
+            retainAlarm(Math.max(now + 1, borrowDeadline), "pool-borrow", key);
           }
         }
         if (
@@ -17900,23 +17936,23 @@ export class FleetCoordinator {
         ) {
           const pruneAt = Date.parse(entry.updatedAt) + readyPoolTerminalRetentionMs;
           if (Number.isFinite(pruneAt)) {
-            retainAlarm(Math.max(now + 1, pruneAt));
+            retainAlarm(Math.max(now + 1, pruneAt), "pool-retention", key);
           }
         }
       });
       await this.visitStorageRecords<ReadyPoolFillClaim>(
         readyPoolFillClaimPrefix,
-        async (claim) => {
+        async (claim, key) => {
           const expiresAt = Date.parse(claim.expiresAt);
           if (Number.isFinite(expiresAt)) {
-            retainAlarm(Math.max(now + 1, expiresAt));
+            retainAlarm(Math.max(now + 1, expiresAt), "pool-fill", key);
           }
         },
       );
-      await this.visitStorageRecords<ReadyPoolEntry>(typedReadyPoolPrefix, async (entry) => {
+      await this.visitStorageRecords<ReadyPoolEntry>(typedReadyPoolPrefix, async (entry, key) => {
         if (entry.state === "busy") {
           const deadline = readyPoolBorrowDeadline(entry);
-          if (deadline !== undefined) retainAlarm(Math.max(now + 1, deadline));
+          if (deadline !== undefined) retainAlarm(Math.max(now + 1, deadline), "pool-borrow", key);
         }
         if (
           entry.state === "stale" ||
@@ -17924,14 +17960,16 @@ export class FleetCoordinator {
           entry.state === "draining"
         ) {
           const pruneAt = Date.parse(entry.updatedAt) + readyPoolTerminalRetentionMs;
-          if (Number.isFinite(pruneAt)) retainAlarm(Math.max(now + 1, pruneAt));
+          if (Number.isFinite(pruneAt))
+            retainAlarm(Math.max(now + 1, pruneAt), "pool-retention", key);
         }
       });
       await this.visitStorageRecords<ReadyPoolFillClaim>(
         typedReadyPoolFillClaimPrefix,
-        async (claim) => {
+        async (claim, key) => {
           const expiresAt = Date.parse(claim.expiresAt);
-          if (Number.isFinite(expiresAt)) retainAlarm(Math.max(now + 1, expiresAt));
+          if (Number.isFinite(expiresAt))
+            retainAlarm(Math.max(now + 1, expiresAt), "pool-fill", key);
         },
       );
     });
@@ -17939,24 +17977,95 @@ export class FleetCoordinator {
       "aws",
       this.awsOrphanSweepConfig(),
     );
-    retainAlarm(orphanSweepAlarm);
+    retainAlarm(orphanSweepAlarm, "orphan-sweep", awsOrphanSweepRecordKey);
     const azureOrphanSweepAlarm = await this.nextOrphanSweepAlarmTime(
       "azure",
       this.azureOrphanSweepConfig(),
     );
-    retainAlarm(azureOrphanSweepAlarm);
+    retainAlarm(azureOrphanSweepAlarm, "orphan-sweep", azureOrphanSweepRecordKey);
     const azureCleanupAlarm = await this.nextAzureDeferredCleanupAlarmTime();
-    retainAlarm(azureCleanupAlarm);
+    if (azureCleanupAlarm)
+      retainAlarm(
+        azureCleanupAlarm.time,
+        "azure-cleanup",
+        azureCleanupAlarm.key,
+        azureCleanupAlarm.dueAt,
+      );
     const awsIngressAlarm = await this.nextAWSIngressReconcileAlarmTime();
-    retainAlarm(awsIngressAlarm);
+    if (awsIngressAlarm)
+      retainAlarm(
+        awsIngressAlarm.time,
+        "aws-ingress",
+        awsIngressReconcileRecordKey,
+        awsIngressAlarm.dueAt,
+      );
     const nextCheckpoint = await this.state.storage.list<CoordinatorCheckpointDueIndex>({
       prefix: checkpointDuePrefix,
       limit: 1,
     });
-    const checkpointDeadline = [...nextCheckpoint.values()][0]?.nextSweepAt;
-    if (checkpointDeadline) retainAlarm(Math.max(now + 1, Date.parse(checkpointDeadline)));
-    if ((await this.state.storage.get<string>(runPruneCursorKey)) !== undefined) {
-      retainAlarm(now + 1000);
+    const checkpoint = [...nextCheckpoint][0];
+    if (checkpoint) {
+      // Tombstone pruning advances audit rows while retaining the same due marker.
+      const pendingEvents = await this.state.storage.list({
+        prefix: `checkpoint-event:${checkpoint[1].checkpointID}:`,
+        limit: 1,
+      });
+      retainAlarm(
+        Math.max(now + 1, Date.parse(checkpoint[1].nextSweepAt)),
+        "checkpoint",
+        `${checkpoint[0]}:${pendingEvents.keys().next().value ?? ""}`,
+      );
+    }
+    const runPruneCursor = await this.state.storage.get<string>(runPruneCursorKey);
+    if (runPruneCursor !== undefined) {
+      retainAlarm(now + 1000, "run-prune", runPruneCursor, now);
+    }
+    const finishedAt = Date.now();
+    const dueThrough = finishedAt + maintenanceAlarmDueEpsilonMs;
+    let earliest: (typeof candidates)[number] | undefined;
+    let earliestOverdue: (typeof candidates)[number] | undefined;
+    let earliestFutureTime = Infinity;
+    for (const candidate of candidates) {
+      if (!earliest || candidate.time < earliest.time) earliest = candidate;
+      if (candidate.dueAt <= dueThrough) {
+        if (!earliestOverdue || candidate.time < earliestOverdue.time) earliestOverdue = candidate;
+      } else {
+        earliestFutureTime = Math.min(earliestFutureTime, candidate.time);
+      }
+    }
+    let alarmTime = earliest?.time;
+    if (maintenanceArmRevision !== undefined) {
+      if (!earliestOverdue) {
+        this.maintenanceAlarmStreak = undefined;
+      } else if (this.alarmArmRevision === maintenanceArmRevision) {
+        // An admitted arm bypasses this pass's backoff without erasing overdue debt.
+        const previous = this.maintenanceAlarmStreak;
+        const same =
+          previous?.source === earliestOverdue.source && previous.key === earliestOverdue.key;
+        const delayMs = same
+          ? Math.min(
+              maintenanceAlarmBackoffMaxMs,
+              previous.delayMs === 0 ? maintenanceAlarmBackoffInitialMs : previous.delayMs * 2,
+            )
+          : 0;
+        this.maintenanceAlarmStreak = {
+          source: earliestOverdue.source,
+          key: earliestOverdue.key,
+          delayMs,
+        };
+        if (delayMs > 0) {
+          alarmTime = Math.min(
+            Math.max(earliestOverdue.time, finishedAt + delayMs),
+            earliestFutureTime,
+          );
+          if (delayMs !== previous?.delayMs) {
+            const opaqueKey = (await sha256Hex(earliestOverdue.key)).slice(0, 16);
+            console.warn(
+              `maintenance alarm made no progress source=${earliestOverdue.source} key=${opaqueKey} delayMs=${delayMs}`,
+            );
+          }
+        }
+      }
     }
     if (alarmTime === undefined) {
       await this.state.clearAlarm();
@@ -17965,16 +18074,18 @@ export class FleetCoordinator {
     await this.state.scheduleAlarm(alarmTime);
   }
 
-  private async nextAWSIngressReconcileAlarmTime(): Promise<number | undefined> {
+  private async nextAWSIngressReconcileAlarmTime(): Promise<
+    { time: number; dueAt: number } | undefined
+  > {
     const record = await this.state.storage.get<StoredAWSIngressReconcileRecord>(
       awsIngressReconcileRecordKey,
     );
     const retryTimes = awsIngressReconcileTargets(record)
       .map((target) => Date.parse(target.retryAt))
       .filter((time) => Number.isFinite(time));
-    return retryTimes.length > 0
-      ? Math.max(Date.now() + awsIngressReconcileMinDelayMs, Math.min(...retryTimes))
-      : undefined;
+    if (retryTimes.length === 0) return undefined;
+    const dueAt = Math.min(...retryTimes);
+    return { time: Math.max(Date.now() + awsIngressReconcileMinDelayMs, dueAt), dueAt };
   }
 
   private async markAWSIngressReconcilePending(
@@ -18139,18 +18250,24 @@ export class FleetCoordinator {
     }
   }
 
-  private async nextAzureDeferredCleanupAlarmTime(): Promise<number | undefined> {
+  private async nextAzureDeferredCleanupAlarmTime(): Promise<
+    { key: string; time: number; dueAt: number } | undefined
+  > {
     const records = await this.state.storage.list<AzureDeferredCleanupRecord>({
       prefix: azureDeferredCleanupPrefix,
     });
-    const times = [...records.values()]
-      .filter((record) => !record.terminalAt)
-      .map((record) => Date.parse(record.retryAt))
-      .filter((time) => Number.isFinite(time));
-    if (times.length === 0) {
-      return undefined;
-    }
-    return Math.max(Date.now() + 1000, Math.min(...times));
+    const earliest = [...records]
+      .filter(([, record]) => !record.terminalAt)
+      .map(([key, record]) => ({ key, time: Date.parse(record.retryAt) }))
+      .filter(({ time }) => Number.isFinite(time))
+      .toSorted((a, b) => a.time - b.time)[0];
+    return (
+      earliest && {
+        ...earliest,
+        dueAt: earliest.time,
+        time: Math.max(Date.now() + 1000, earliest.time),
+      }
+    );
   }
 
   private async runAzureDeferredCleanups(): Promise<void> {
@@ -26641,6 +26758,16 @@ function sameUnboundProvisioningRecoveryLease(
   return JSON.stringify(current) === JSON.stringify(expected);
 }
 
+function runtimeAdapterDeleteDueAt(lease: LeaseRecord, now: number): number | undefined {
+  if (!lease.runtimeAdapterDeleteRequestedAt) return undefined;
+  const retryAt = Date.parse(lease.runtimeAdapterDeleteRetryAt ?? "");
+  const dispatchUntil = Date.parse(lease.runtimeAdapterDeleteDispatchUntil ?? "");
+  const dueAt = Number.isFinite(retryAt) ? retryAt : now;
+  return Number.isFinite(dispatchUntil) && dispatchUntil > now
+    ? Math.max(dueAt, dispatchUntil)
+    : dueAt;
+}
+
 function nextLeaseAlarmTime(lease: LeaseRecord, coordinatorGeneration: string): number | undefined {
   const now = Date.now();
   // A restart must be observed before the TTL/client deadline, even when this
@@ -26654,20 +26781,9 @@ function nextLeaseAlarmTime(lease: LeaseRecord, coordinatorGeneration: string): 
     interruptedProvisioningAt === undefined
       ? candidate
       : Math.min(candidate, interruptedProvisioningAt);
-  const runtimeAdapterDeleteRetryAt = Date.parse(lease.runtimeAdapterDeleteRetryAt ?? "");
-  const runtimeAdapterDeleteDispatchUntil = Date.parse(
-    lease.runtimeAdapterDeleteDispatchUntil ?? "",
-  );
-  if (lease.runtimeAdapterDeleteRequestedAt) {
-    let deleteAlarm = Number.isFinite(runtimeAdapterDeleteRetryAt)
-      ? Math.max(now + 1000, runtimeAdapterDeleteRetryAt)
-      : now + 1000;
-    if (
-      Number.isFinite(runtimeAdapterDeleteDispatchUntil) &&
-      runtimeAdapterDeleteDispatchUntil > now
-    ) {
-      deleteAlarm = Math.max(deleteAlarm, runtimeAdapterDeleteDispatchUntil);
-    }
+  const deleteDueAt = runtimeAdapterDeleteDueAt(lease, now);
+  if (deleteDueAt !== undefined) {
+    const deleteAlarm = Math.max(now + 1000, deleteDueAt);
     return includeInterruptedProvisioning(
       leaseIsLive(lease) && Number.isFinite(expiresAt)
         ? Math.min(expiresAt, deleteAlarm)

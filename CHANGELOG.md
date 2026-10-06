@@ -11,6 +11,7 @@
 
 ### Fixes
 
+- Stop coordinator alarm rearm loops from stale prewarm retries, clamped overdue work, and controller-owned wakes, with diagnostics and bounded backoff that survives concurrent heartbeats without postponing future deadlines. [PR 2711](https://github.com/openclaw/crabbox/pull/2711).
 - Transfer only verified seeded-worktree deltas on POSIX SSH targets, prune exclusions from fresh verified seeds, include reverted and remote edits on reused leases, and witness rsync receivers directly so failed transfers do not strand a detached workspace guard.
 
 - Reject AWS developer-image mints outside the requested region and clean up failed unpromoted candidate checkpoints and snapshots while preserving promotion rollback.

@@ -65,6 +65,7 @@ import { HetznerClient, HetznerProvisioningError } from "../src/hetzner";
 import { errorMessage } from "../src/http";
 import {
   provisioningOperationKey,
+  putProvisioningOperation,
   type LeaseProvisioningOperation,
 } from "../src/lease-provisioning";
 import { MISSING_ORG_KEY, isCurrentOrgKey, orgKeyForLabel } from "../src/org-identity";
@@ -3036,7 +3037,7 @@ describe("runtime adapter relay", () => {
     const fleet = testFleet(storage);
     const internal = fleet as unknown as {
       cleanupExpiredWebVNCPortalViewerAuth(now: number): Promise<void>;
-      webVNCPortalViewerAlarmTimes(now: number): Promise<number[]>;
+      webVNCPortalViewerAlarms(now: number): Promise<Array<{ key: string; time: number }>>;
     };
 
     await internal.cleanupExpiredWebVNCPortalViewerAuth(now);
@@ -3055,10 +3056,11 @@ describe("runtime adapter relay", () => {
       const suffix = index.toString().padStart(3, "0");
       storage.seed(`webvnc-viewer-ticket:webvnc_view_${suffix}`, { expiresAt: futureAt });
     }
-    const alarmTimes = await internal.webVNCPortalViewerAlarmTimes(now);
+    const alarms = await internal.webVNCPortalViewerAlarms(now);
 
-    expect(alarmTimes).toHaveLength(130);
-    expect(alarmTimes.every((time) => time === Date.parse(futureAt))).toBe(true);
+    expect(alarms).toHaveLength(130);
+    expect(alarms.every(({ time }) => time === Date.parse(futureAt))).toBe(true);
+    expect(new Set(alarms.map(({ key }) => key)).size).toBe(130);
     expect(
       storage.listOptions.some(
         (options) => options.prefix === "webvnc-viewer-ticket:" && options.startAfter !== undefined,
@@ -52991,6 +52993,533 @@ describe("synthetic acknowledgement reliability", () => {
     expect(storage.alarm()).toBe(Date.parse(debt.cleanupClaimExpiresAt!));
   });
 
+  it("does not rearm elapsed prewarm retry history after a full maintenance pass", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      const workspace = {
+        id: "active-workspace",
+        leaseID,
+        owner: lease.owner,
+        org: lease.org,
+        profile: "default",
+        provider: "hetzner",
+        class: "standard",
+        desktop: false,
+        ttlSeconds: 3600,
+        idleTimeoutSeconds: 1800,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      storage.seed(workspaceFixtureKey(workspace.id), workspace);
+      storage.seed(`lease:${leaseID}`, { ...lease, workspaceID: workspace.id });
+      const spareID = "cbx_aacc00000003";
+      storage.seed(workspaceFixtureKey("healthy-spare"), {
+        ...workspace,
+        id: "healthy-spare",
+        leaseID: spareID,
+        prewarm: true,
+      });
+      storage.seed(`lease:${spareID}`, { ...lease, id: spareID, workspaceID: "healthy-spare" });
+      const failedKey = workspaceFixtureKey("failed-spare");
+      storage.seed(failedKey, {
+        ...workspace,
+        id: "failed-spare",
+        leaseID: "cbx_aacc00000004",
+        prewarm: true,
+        error: "synthetic provisioning failure",
+        releaseRequestedAt: new Date(Date.now() - 600_000).toISOString(),
+        updatedAt: new Date(Date.now() - 600_000).toISOString(),
+      });
+      await testFleet(storage, {}, { CRABBOX_WORKSPACE_PREWARM_COUNT: "1" }).alarm();
+      expect(storage.value(failedKey)).toBeDefined(); // Retention is independent of retry eligibility.
+      expect(storage.alarm()).toBe(Date.parse(lease.expiresAt) - 300_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the durable provisioning wake for an expired controller-owned lease", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      storage.seed(`lease:${leaseID}`, {
+        ...lease,
+        state: "provisioning",
+        expiresAt: new Date(Date.now() - 1).toISOString(),
+      });
+      const nextWake = Date.now() + 45_000;
+      await putProvisioningOperation(storage, {
+        schema: 1,
+        leaseID,
+        operationID: leaseID,
+        generation: "synthetic-generation",
+        owner: lease.owner,
+        org: lease.org,
+        provider: lease.provider,
+        scope: "synthetic-scope",
+        revision: 1,
+        createdAt: Date.now() - 60_000,
+        deadline: Date.now() - 1,
+        step: { phase: "blocked", attempt: 0, nextWake, state: {} },
+      });
+      await testFleet(storage).alarm();
+      expect(storage.alarm()).toBe(nextWake);
+      expect(storage.value<LeaseRecord>(`lease:${leaseID}`)?.state).toBe("provisioning");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("defers a pool wake whose owner records are missing without dropping its evidence", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const storage = new MemoryStorage();
+      await setPoolWake(storage, leaseID, Date.now() - 1);
+      await testFleet(storage).alarm();
+      expect(storage.alarm()).toBe(Date.now() + 15_000);
+      expect(storage.value(`portable-ready-pool-v1-wake:${leaseID}`)).toEqual({
+        at: Date.now() + 15_000,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([null, false, 0, { kind: "pool-access", operationID: "synthetic-invalid" }])(
+    "consumes a malformed provisioning due value %j",
+    async (value) => {
+      const storage = new MemoryStorage();
+      const key = "provisioning-due:0000000000000000:synthetic-invalid";
+      storage.seed(key, value);
+      await testFleet(storage).alarm();
+      expect(storage.value(key)).toBeUndefined();
+      expect(storage.alarm()).toBeUndefined();
+    },
+  );
+
+  it("backs off only the same overdue alarm candidate and resets on future work", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      const overdue = { ...lease, expiresAt: new Date(Date.now() - 1).toISOString() };
+      storage.seed(`lease:${leaseID}`, overdue);
+      const fleet = testFleet(storage);
+      // Simulate an owner that cannot advance, independently of the repaired owner bugs.
+      vi.spyOn(
+        fleet as unknown as { expireLeases(): Promise<void> },
+        "expireLeases",
+      ).mockResolvedValue(undefined);
+      for (const delay of [0, 1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- each delivery observes the preceding no-progress streak.
+        await fleet.alarm();
+        expect(Math.max(0, storage.alarm()! - Date.now())).toBe(delay);
+        vi.setSystemTime(Math.max(Date.now() + 1, storage.alarm()!));
+      }
+      expect(warn).toHaveBeenCalledTimes(7);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/source=lease key=[a-f0-9]{16} delayMs=1000$/);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(lease.owner);
+
+      storage.seed(`lease:${leaseID}`, {
+        ...lease,
+        expiresAt: new Date(Date.now() + 90_000).toISOString(),
+      });
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 90_000);
+      storage.seed(`lease:${leaseID}`, overdue);
+      await fleet.alarm();
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 1);
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 1000);
+
+      await storage.delete(`lease:${leaseID}`);
+      storage.seed(`lease:${releaseID}`, { ...overdue, id: releaseID });
+      await fleet.alarm();
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 1);
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { scanMs: 0, expectedDelay: 5000 },
+    { scanMs: 6000, expectedDelay: 60000 },
+  ])(
+    "keeps future alarm deadlines during overdue backoff ($scanMs ms scan)",
+    async ({ scanMs, expectedDelay }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const storage = new MemoryStorage();
+        const first = seedLease(storage);
+        const second = seedLease(storage, releaseID);
+        storage.seed(`lease:${leaseID}`, {
+          ...first,
+          expiresAt: new Date(Date.now() - 2000).toISOString(),
+        });
+        storage.seed(`lease:${releaseID}`, {
+          ...second,
+          expiresAt: new Date(Date.now() - 1000).toISOString(),
+        });
+        const fleet = testFleet(storage);
+        vi.spyOn(
+          fleet as unknown as { expireLeases(): Promise<void> },
+          "expireLeases",
+        ).mockResolvedValue(undefined);
+        for (const delay of [0, 1000, 2000, 4000, 8000, 16000, 32000, 60000]) {
+          // oxlint-disable-next-line eslint/no-await-in-loop -- both overdue items must share the advancing backoff.
+          await fleet.alarm();
+          expect(Math.max(0, storage.alarm()! - Date.now())).toBe(delay);
+          vi.setSystemTime(Math.max(Date.now() + 1, storage.alarm()!));
+        }
+        const futureID = "cbx_aacc00000003";
+        const future = seedLease(storage, futureID);
+        const scanStartedAt = Date.now();
+        storage.seed(`lease:${futureID}`, {
+          ...future,
+          expiresAt: new Date(scanStartedAt + 5000).toISOString(),
+        });
+        storage.beforeList = async (options) => {
+          // This read follows lease candidate collection in the final alarm scan.
+          if (options?.prefix === "checkpoint-due:" && options.limit === 1) {
+            vi.setSystemTime(scanStartedAt + scanMs);
+          }
+        };
+        await fleet.alarm();
+        expect(storage.alarm()! - Date.now()).toBe(expectedDelay);
+
+        storage.beforeList = async () => {};
+        await storage.delete(`lease:${futureID}`);
+        await fleet.alarm();
+        expect(storage.alarm()).toBe(Date.now() + 60000);
+      } finally {
+        warn.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    {
+      source: "aws-ingress",
+      key: "aws-ingress-reconcile:pending",
+      owner: "reconcileAWSIngressIfIdle",
+    },
+    { source: "azure-cleanup", key: "azure-cleanup:synthetic", owner: "runAzureDeferredCleanups" },
+    { source: "lease", key: `lease:${leaseID}`, owner: "reconcileRuntimeAdapterDeletes" },
+    { source: "run-prune", key: "maintenance:run-prune-cursor", owner: "pruneTerminalRuns" },
+  ])(
+    "backs off clamped overdue $source work without delaying future wakes",
+    async ({ source, key, owner }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const storage = new MemoryStorage();
+        const lease = seedLease(storage);
+        const past = new Date(Date.now() - 60_000).toISOString();
+        const records: Record<string, unknown> = {
+          "aws-ingress": {
+            targets: [
+              {
+                anchor: { ...lease, provider: "aws" },
+                attempts: 0,
+                generation: "synthetic-generation",
+                updatedAt: past,
+                retryAt: past,
+              },
+            ],
+          },
+          "azure-cleanup": {
+            name: "synthetic-vm",
+            location: "westeurope",
+            subscription: "synthetic-subscription",
+            resourceGroup: "synthetic-group",
+            leaseID,
+            slug: lease.slug,
+            owner: lease.owner,
+            createdAt: past,
+            updatedAt: past,
+            attempts: 0,
+            retryAt: past,
+          },
+          lease: {
+            ...lease,
+            lifecycle: "registered",
+            provider: "external",
+            runtimeAdapterID: "synthetic-adapter",
+            runtimeAdapterWorkspaceID: "synthetic-workspace",
+            runtimeAdapterDeleteRequestedAt: past,
+            runtimeAdapterDeleteRetryAt: past,
+          },
+          "run-prune": "run:run_000000000001",
+        };
+        storage.seed(key, records[source]);
+        const fleet = testFleet(storage);
+        // Leave one owner unable to advance its record while running the full maintenance pass.
+        vi.spyOn(fleet as unknown as Record<string, () => Promise<void>>, owner).mockResolvedValue(
+          undefined,
+        );
+        for (const delay of [1000, 1000, 2000, 4000]) {
+          // oxlint-disable-next-line eslint/no-await-in-loop -- each delivery observes the same unconsumed raw deadline.
+          await fleet.alarm();
+          expect(storage.alarm()! - Date.now()).toBe(delay);
+          vi.setSystemTime(storage.alarm()!);
+        }
+        const future = seedLease(storage, releaseID);
+        storage.seed(`lease:${releaseID}`, {
+          ...future,
+          expiresAt: new Date(Date.now() + 500).toISOString(),
+        });
+        await fleet.alarm();
+        expect(storage.alarm()).toBe(Date.now() + 500);
+        await storage.delete(`lease:${releaseID}`);
+        await fleet.alarm();
+        expect(storage.alarm()).toBe(Date.now() + 16000);
+      } finally {
+        warn.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    { retryMs: undefined, dispatchMs: undefined, scheduledMs: 1000 },
+    { retryMs: -1000, dispatchMs: undefined, scheduledMs: 1000 },
+    { retryMs: 500, dispatchMs: undefined, scheduledMs: 1000 },
+    { retryMs: -1000, dispatchMs: 5000, scheduledMs: 5000 },
+  ])(
+    "preserves heartbeat delete deadlines ($retryMs retry, $dispatchMs dispatch)",
+    async ({ retryMs, dispatchMs, scheduledMs }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const storage = new MemoryStorage();
+        const lease = seedLease(storage);
+        storage.seed(`lease:${leaseID}`, {
+          ...lease,
+          lifecycle: "registered",
+          provider: "external",
+          runtimeAdapterDeleteRequestedAt: new Date(Date.now() - 60_000).toISOString(),
+          ...(retryMs === undefined
+            ? {}
+            : { runtimeAdapterDeleteRetryAt: new Date(Date.now() + retryMs).toISOString() }),
+          ...(dispatchMs === undefined
+            ? {}
+            : {
+                runtimeAdapterDeleteDispatchUntil: new Date(Date.now() + dispatchMs).toISOString(),
+              }),
+        });
+        const response = await testFleet(storage).fetch(
+          request("POST", `/v1/leases/${leaseID}/heartbeat`, { headers }),
+        );
+        expect(response.status).toBe(200);
+        expect(storage.alarm()).toBe(Date.now() + scheduledMs);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("does not back off advancing run-prune batches", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const storage = new MemoryStorage();
+      const expiredAt = new Date(Date.now() - 31 * 24 * 60 * 60_000).toISOString();
+      for (let index = 0; index < 49; index++) {
+        const id = `run_${index.toString().padStart(12, "0")}`;
+        storage.seed(
+          `run:${id}`,
+          testRun({
+            id,
+            owner: "alice@example.com",
+            org: "example-org",
+            state: "succeeded",
+            startedAt: expiredAt,
+            endedAt: expiredAt,
+          }),
+        );
+      }
+      const fleet = testFleet(storage);
+      for (const remaining of [33, 17, 1]) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- each pass must advance its cursor without escalating.
+        await fleet.alarm();
+        // oxlint-disable-next-line eslint/no-await-in-loop -- verify the actual batch before delivering another alarm.
+        expect(await storage.list({ prefix: "run:" })).toHaveLength(remaining);
+        expect(storage.alarm()).toBe(Date.now() + 1000);
+        vi.setSystemTime(storage.alarm()!);
+      }
+      await fleet.alarm();
+      expect(await storage.list({ prefix: "run:" })).toHaveLength(0);
+      expect(storage.alarm()).toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps request arms and provisioning wakes immediate during an alarm backoff streak", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      seedLease(storage, releaseID);
+      storage.seed(`lease:${leaseID}`, {
+        ...lease,
+        expiresAt: new Date(Date.now() - 1).toISOString(),
+      });
+      const fleet = testFleet(storage);
+      vi.spyOn(
+        fleet as unknown as { expireLeases(): Promise<void> },
+        "expireLeases",
+      ).mockResolvedValue(undefined);
+      await fleet.alarm();
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 1000);
+      await setPoolWake(storage, "synthetic-future-pool", Date.now() + 25);
+      await fleet.alarm();
+      expect(storage.value(legacyAlarmKey)).toBe(Date.now() + 2000);
+      expect(storage.alarm()).toBe(Date.now() + 25);
+      const release = await fleet.fetch(
+        request("POST", `/v1/leases/${releaseID}/release`, {
+          headers,
+          body: { delete: true },
+        }),
+      );
+      expect(release.status).toBe(200);
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now());
+      // Registration is an explicit request-path full scheduleAlarm() call.
+      const registration = await fleet.fetch(
+        request("PUT", "/v1/leases/cbx_aacc00000003/registration", {
+          headers,
+          body: { provider: "external", target: "linux", host: "192.0.2.30", ttlSeconds: 3600 },
+        }),
+      );
+      expect(registration.status).toBe(201);
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 1);
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves a request wake admitted during a maintenance backoff pass", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const entered = deferred<void>();
+    const resume = deferred<void>();
+    let maintenance: Promise<void> | undefined;
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      seedLease(storage, releaseID);
+      storage.seed(`lease:${leaseID}`, {
+        ...lease,
+        expiresAt: new Date(Date.now() - 1).toISOString(),
+      });
+      const fleet = testFleet(storage);
+      vi.spyOn(
+        fleet as unknown as { expireLeases(): Promise<void> },
+        "expireLeases",
+      ).mockResolvedValue(undefined);
+      await fleet.alarm();
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 1000);
+      vi.setSystemTime(storage.alarm()!);
+      let blocked = false;
+      storage.beforeList = async (options) => {
+        if (options?.prefix === "workspace:" && !blocked) {
+          blocked = true;
+          entered.resolve();
+          await resume.promise;
+        }
+      };
+      maintenance = fleet.alarm();
+      await entered.promise;
+      expect(
+        (
+          await fleet.fetch(
+            request("POST", `/v1/leases/${releaseID}/release`, {
+              headers,
+              body: { delete: true },
+            }),
+          )
+        ).status,
+      ).toBe(200);
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now());
+      resume.resolve();
+      await maintenance;
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 1);
+    } finally {
+      resume.resolve();
+      await maintenance;
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves the overdue streak across a heartbeat admitted during maintenance", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const entered = deferred<void>();
+    const resume = deferred<void>();
+    let maintenance: Promise<void> | undefined;
+    try {
+      const storage = new MemoryStorage();
+      const lease = seedLease(storage);
+      seedLease(storage, releaseID);
+      storage.seed(`lease:${leaseID}`, {
+        ...lease,
+        expiresAt: new Date(Date.now() - 1).toISOString(),
+      });
+      const fleet = testFleet(storage);
+      vi.spyOn(
+        fleet as unknown as { expireLeases(): Promise<void> },
+        "expireLeases",
+      ).mockResolvedValue(undefined);
+      await fleet.alarm();
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 1000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(storage.alarm()!);
+      let blocked = false;
+      storage.beforeList = async (options) => {
+        if (options?.prefix === "workspace:" && !blocked) {
+          blocked = true;
+          entered.resolve();
+          await resume.promise;
+        }
+      };
+      maintenance = fleet.alarm();
+      await entered.promise;
+      expect(storage.alarm()).toBeUndefined();
+      const heartbeat = await fleet.fetch(
+        request("POST", `/v1/leases/${releaseID}/heartbeat`, { headers }),
+      );
+      expect(heartbeat.status).toBe(200);
+      expect(storage.alarm()).toBeDefined();
+      resume.resolve();
+      await maintenance;
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 1);
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      await fleet.alarm();
+      expect(storage.alarm()).toBe(Date.now() + 2000);
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      resume.resolve();
+      await maintenance;
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("reconstructs queued AWS deletion and ingress reconciliation from durable intent", async () => {
     const storage = new ObservedMemoryStorage();
     const lease = {
@@ -55128,6 +55657,40 @@ describe("portable bounded ready-pool access", () => {
       provider,
     };
   }
+
+  it("advances an obsolete ready-pool wake to the backing lease rotation deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const f = await fixture();
+      expect((await f.register()).status).toBe(200);
+      await setPoolWake(f.storage, f.lease.id, Date.now() - 1);
+      await f.fleet.alarm();
+      expect(f.storage.alarm()).toBe(Date.parse(f.lease.expiresAt) - 60_000);
+      expect(f.storage.value(`portable-ready-pool-v1-wake:${f.lease.id}`)).toEqual({
+        at: Date.parse(f.lease.expiresAt) - 60_000,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("advances an obsolete active pool-grant wake without revoking valid access", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const f = await fixture();
+      const { receipt } = await f.issue();
+      expect((await f.post("ack-access", receipt)).status).toBe(200);
+      const nextWake = f.storage.value<{ at: number }>(
+        `portable-ready-pool-v1-wake:${f.lease.id}`,
+      )!.at;
+      await setPoolWake(f.storage, f.lease.id, Date.now() - 1);
+      await f.fleet.alarm();
+      expect(f.storage.alarm()).toBe(nextWake);
+      expect(f.capability.revoke).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("issues hashed pending authority, acknowledges once, and never renews through heartbeat", async () => {
     const f = await fixture();
