@@ -12,10 +12,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -677,7 +679,7 @@ func TestCloudflareCreateSandboxSendsInstanceType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, _, err := backend.createSandbox(context.Background(), client, core.Repo{Name: "my-app", Root: t.TempDir()}, "")
+	created, _, err := backend.createSandbox(context.Background(), client, core.Repo{Name: "my-app", Root: t.TempDir()}, "", sandboxSource{})
 	leaseID, slug := created.LeaseID, created.Slug
 	if err != nil {
 		t.Fatal(err)
@@ -1741,8 +1743,11 @@ func TestCloudflareFreshPublicationDoesNotReclaimCompetingClaim(t *testing.T) {
 		}
 		var req createSandboxRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		var err error
-		competing, err = core.ClaimLeaseForRepoProviderScopePondWithLabels(req.ID, req.Slug, providerName, "", "other-pond", repo, time.Minute, map[string]string{"owner": "successor"})
+		pending, ok, err := core.ResolveLeaseClaimForProvider(req.ID, providerName)
+		if err != nil || !ok {
+			t.Errorf("pending claim ok=%v err=%v", ok, err)
+		}
+		competing, err = core.UpdateLeaseClaimLabelsIfUnchanged(req.ID, pending, map[string]string{"owner": "successor"})
 		if err != nil {
 			t.Error(err)
 		}
@@ -1756,6 +1761,150 @@ func TestCloudflareFreshPublicationDoesNotReclaimCompetingClaim(t *testing.T) {
 	}
 	if err := core.VerifyLeaseClaimUnchanged(competing.LeaseID, competing); err != nil {
 		t.Fatalf("competing claim changed: %v", err)
+	}
+}
+
+func TestCloudflareRejectedCreateReleasesItsClaim(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"image missing is not configured"}`)
+	}))
+	defer server.Close()
+	backend := cloudflareBackend{cfg: core.Config{Cloudflare: core.CloudflareConfig{APIURL: server.URL, Token: "synthetic-token"}}, rt: core.Runtime{HTTP: server.Client(), Stdout: io.Discard, Stderr: io.Discard}}
+	err := backend.Warmup(context.Background(), core.WarmupRequest{Repo: core.Repo{Name: "repo", Root: t.TempDir()}, Keep: true})
+	if err == nil || strings.Contains(err.Error(), "may have allocated") {
+		t.Fatalf("warmup error = %v, want the runner's rejection", err)
+	}
+	if claims, err := localCloudflareClaims(); err != nil || len(claims) != 0 {
+		t.Fatalf("claims = %+v err=%v, want the rejected create's claim released", claims, err)
+	}
+}
+
+func TestCloudflareCreateStoppedMidStartReportsTheStop(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A concurrent `crabbox stop` releases the claim before the create answers.
+		var body struct{ ID string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		claim, ok, err := core.ResolveLeaseClaimForProvider(body.ID, providerName)
+		if err != nil || !ok {
+			t.Errorf("claim for %q: ok=%v err=%v", body.ID, ok, err)
+		} else if err := core.RemoveLeaseClaimIfUnchanged(body.ID, claim); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"lease was stopped while it was starting","state":"stopped"}`)
+	}))
+	defer server.Close()
+	backend := cloudflareBackend{cfg: core.Config{Cloudflare: core.CloudflareConfig{APIURL: server.URL, Token: "synthetic-token"}}, rt: core.Runtime{HTTP: server.Client(), Stdout: io.Discard, Stderr: io.Discard}}
+	err := backend.Warmup(context.Background(), core.WarmupRequest{Repo: core.Repo{Name: "repo", Root: t.TempDir()}, Keep: true})
+	if err == nil || !strings.Contains(err.Error(), "stopped while it was starting") || strings.Contains(err.Error(), "claim changed") {
+		t.Fatalf("warmup error = %v, want only the runner's stop report", err)
+	}
+}
+
+func TestCloudflareStopKeepsAClaimWhoseCreateIsInFlight(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	var backend cloudflareBackend
+	var created atomic.Bool
+	var stopErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			if !created.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"state":"running"}`, path.Base(r.URL.Path))
+			return
+		}
+		// Another CLI stops the lease before the runner records it.
+		var req createSandboxRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		stopErr = backend.Stop(context.Background(), core.StopRequest{ID: req.ID})
+		created.Store(true)
+		_, _ = fmt.Fprintf(w, `{"id":%q,"state":"running"}`, req.ID)
+	}))
+	defer server.Close()
+	backend = cloudflareBackend{cfg: core.Config{Cloudflare: core.CloudflareConfig{APIURL: server.URL, Token: "synthetic-token"}}, rt: core.Runtime{HTTP: server.Client(), Stdout: io.Discard, Stderr: io.Discard}}
+	if err := backend.Warmup(context.Background(), core.WarmupRequest{Repo: core.Repo{Name: "repo", Root: t.TempDir()}, Keep: true}); err != nil {
+		t.Fatalf("warmup: %v", err)
+	}
+	if stopErr == nil || !strings.Contains(stopErr.Error(), "creation is unresolved") {
+		t.Fatalf("stop error = %v, want a retryable pending-create failure", stopErr)
+	}
+	if claims, err := localCloudflareClaims(); err != nil || len(claims) != 1 {
+		t.Fatalf("claims = %+v err=%v, want the created lease still claimed", claims, err)
+	}
+}
+
+type pendingCreateClock struct{ seconds atomic.Int64 }
+
+func (c *pendingCreateClock) Now() time.Time { return time.Unix(c.seconds.Load(), 0) }
+
+func TestCloudflarePendingCreateSurvivesReconciliation(t *testing.T) {
+	for _, action := range []string{"stop-not-found", "cleanup-not-found", "cleanup-stopped"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			clock := &pendingCreateClock{}
+			clock.seconds.Store(time.Now().Unix())
+			var backend cloudflareBackend
+			var created atomic.Bool
+			var deletes atomic.Int64
+			var leaseID string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					if r.Method == http.MethodDelete {
+						deletes.Add(1)
+					}
+					if !created.Load() && action != "cleanup-stopped" {
+						http.NotFound(w, r)
+						return
+					}
+					// A snapshot propagation retry can temporarily report stopped.
+					_, _ = fmt.Fprintf(w, `{"id":%q,"state":"stopped"}`, path.Base(r.URL.Path))
+					return
+				}
+				var req createSandboxRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				leaseID = req.ID
+				// A delayed submission or a wall-clock jump outlasts the old grace period.
+				clock.seconds.Add(600)
+				if action == "stop-not-found" {
+					if err := backend.Stop(t.Context(), core.StopRequest{ID: req.ID}); err == nil {
+						t.Error("stop retired an unresolved create")
+					}
+				} else if err := backend.Cleanup(t.Context(), core.CleanupRequest{}); err != nil {
+					t.Errorf("cleanup: %v", err)
+				}
+				if claim, ok, err := core.ResolveLeaseClaimForProvider(req.ID, providerName); err != nil || !ok || claim.Labels[runnerURLLabel] != backend.cfg.Cloudflare.APIURL || claim.Labels["workdir"] != "/workspace/app" {
+					t.Errorf("lost create custody: claim=%+v ok=%v err=%v", claim, ok, err)
+				}
+				created.Store(true)
+				_, _ = fmt.Fprintf(w, `{"id":%q,"state":"running"}`, req.ID)
+			}))
+			defer server.Close()
+			backend = cloudflareBackend{cfg: core.Config{Cloudflare: core.CloudflareConfig{APIURL: server.URL, Token: "synthetic-token", Workdir: "/workspace/app"}}, rt: core.Runtime{Clock: clock, HTTP: server.Client(), Stdout: io.Discard, Stderr: io.Discard}}
+			if err := backend.Warmup(t.Context(), core.WarmupRequest{Repo: core.Repo{Name: "repo", Root: t.TempDir()}, Keep: true}); err != nil {
+				t.Fatalf("warmup: %v", err)
+			}
+			wantDeletes := int64(0)
+			if action == "stop-not-found" {
+				wantDeletes = 1
+			}
+			if deletes.Load() != wantDeletes {
+				t.Fatalf("delete requests=%d, want %d", deletes.Load(), wantDeletes)
+			}
+			if err := backend.Stop(t.Context(), core.StopRequest{ID: leaseID}); err != nil {
+				t.Fatalf("stop after create completed: %v", err)
+			}
+			if deletes.Load() != wantDeletes+1 {
+				t.Fatalf("completed lease was not destroyed: deletes=%d", deletes.Load())
+			}
+			if _, ok, err := core.ResolveLeaseClaimForProvider(leaseID, providerName); err != nil || ok {
+				t.Fatalf("claim remains after confirmed stop: ok=%v err=%v", ok, err)
+			}
+		})
 	}
 }
 
