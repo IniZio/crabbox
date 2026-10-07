@@ -16,7 +16,7 @@ type Provider struct{}
 func (Provider) Spec() core.ProviderSpec {
 	return core.ProviderSpec{
 		Name: providerName, Family: "azure", Kind: core.ProviderKindDelegatedRun,
-		Features: core.FeatureSet{core.FeatureShellScriptRun, core.FeatureRunSession, core.FeatureCleanup},
+		Features: core.FeatureSet{core.FeatureShellScriptRun, core.FeatureRunSession},
 		Targets:  []core.TargetSpec{{OS: core.TargetLinux}}, Coordinator: core.CoordinatorNever,
 		Authentication:   core.DirectProviderAuthentication(core.ProviderAuthenticationCLI),
 		ClassDisposition: core.ProviderClassDispositionMapped,
