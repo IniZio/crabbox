@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+- AWS Windows images: enable guarded Server 2025 bakes from stock with source-only OS selection, guest-version proof, and matching Server Core containers; explicit Server 2022 leases retain stock selection. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
+
 ### Fixes
 
 - Warmup: report definitive coordinator quota rejection in timing output while preserving recovery for interrupted or ambiguous creation. [PR 2732](https://github.com/openclaw/crabbox/pull/2732). Thanks @shakkernerd.
