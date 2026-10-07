@@ -148,6 +148,21 @@ func (a App) warmupWithLeaseObserver(ctx context.Context, args []string, observe
 		},
 	})
 	if err != nil {
+		var rejected coordinatorCreationRejectedError
+		if *timingJSON && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+			errors.As(err, &rejected) && rejected.requestedLeaseID == strings.TrimSpace(*requestedLeaseID) && rejected.provider == providerName {
+			// Failure stdout is separate from untrusted diagnostic text, including
+			// on older binaries that do not emit a typed rejection result.
+			writeErr := writeTimingJSON(a.Stdout, timingReport{
+				Provider: providerName,
+				CreationRejected: &CreationRejection{
+					Version: 1, RequestedLeaseID: rejected.requestedLeaseID, Code: "cost_limit_exceeded",
+				},
+				TotalMs: time.Since(started).Milliseconds(), ExitCode: 1,
+				RunStatus: RunStatusFailed, ErrorKind: RunErrorProvider,
+			})
+			return errors.Join(err, writeErr)
+		}
 		return err
 	}
 	server, target, leaseID := lease.Server, lease.SSH, lease.LeaseID
