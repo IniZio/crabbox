@@ -35,7 +35,14 @@ crabbox stop --provider azure-sandbox --id cbx_012345abcdef
 The initial shape is 2 CPU / 4 GiB, using the public `ubuntu` disk by default.
 The common class catalog maps every generic class to this one shape; larger
 class names do not provision larger machines. `--azure-sandbox-disk` selects a
-public disk name. SSH, desktop, archive synchronization and snapshot forks are
+public disk name. `--azure-sandbox-disk-id` (or
+`CRABBOX_AZURE_SANDBOX_DISK_ID`) instead selects a prepared private disk image
+in the configured group. Its immutable ID is bound into the allocation intent;
+changing the image cannot change an existing lease on replay. Image production
+and retirement remain the image owner's responsibility. Each allocation gets
+fresh lease labels and lifecycle settings. Full-state snapshot restore is not
+used: that API replays captured settings and does not accept fresh lease labels.
+SSH, desktop, archive synchronization and snapshot forks are
 not advertised. The caller owns workspace preparation, using kept leases and
 `--no-sync`; shell scripts and explicitly allowlisted environment profiles reuse
 the normal CLI input path. `cp` uploads regular local files through the native

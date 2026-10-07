@@ -36,8 +36,9 @@ type execResult struct {
 type createRequest struct {
 	SourcesRef struct {
 		DiskImage struct {
-			Name     string `json:"name"`
-			IsPublic bool   `json:"isPublic"`
+			ID       string `json:"id,omitempty"`
+			Name     string `json:"name,omitempty"`
+			IsPublic bool   `json:"isPublic,omitempty"`
 		} `json:"diskImage"`
 	} `json:"sourcesRef"`
 	Resources map[string]string `json:"resources"`

@@ -13,6 +13,7 @@ type fileAzureSandboxConfig struct {
 	Region        string `yaml:"region,omitempty"`
 	ClientID      string `yaml:"clientId,omitempty"`
 	Disk          string `yaml:"disk,omitempty"`
+	DiskID        string `yaml:"diskId,omitempty"`
 }
 
 const AzureSandboxConfigDefaultDisk string = "ubuntu"
@@ -36,7 +37,7 @@ func (cfg *AzureSandboxConfig) applyFile(file *fileAzureSandboxConfig, trusted b
 
 func (cfg *AzureSandboxConfig) applyEnv() (AzureSandboxConfigApplied, error) {
 	var applied AzureSandboxConfigApplied
-	err := applyConfigEnvironment(cfg, &applied, 0, 6)
+	err := applyConfigEnvironment(cfg, &applied, 0, 7)
 	return applied, err
 }
 
@@ -48,6 +49,7 @@ type AzureSandboxConfigFlagValues struct {
 	Region        *string
 	ClientID      *string
 	Disk          *string
+	DiskID        *string
 }
 
 // RegisterAzureSandboxConfigFlags registers mechanical bindings without selecting a provider.

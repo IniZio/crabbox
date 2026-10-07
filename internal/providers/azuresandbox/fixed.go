@@ -108,6 +108,9 @@ func (b *backend) observe(ctx context.Context, tx *core.FixedTransaction, mode c
 }
 
 func (b *backend) acquire(ctx context.Context, req core.FixedWarmupRequest) (core.LeaseTarget, error) {
+	if b.cfg.AzureSandbox.DiskID != "" && b.cfg.AzureSandbox.Disk != "" && b.cfg.AzureSandbox.Disk != core.AzureSandboxConfigDefaultDisk {
+		return core.LeaseTarget{}, fmt.Errorf("ACA Sandbox private disk ID cannot be combined with a public disk override")
+	}
 	c, err := b.connect()
 	if err != nil {
 		return core.LeaseTarget{}, err
@@ -141,7 +144,11 @@ func (b *backend) acquire(ctx context.Context, req core.FixedWarmupRequest) (cor
 				"autoSuspendPolicy": map[string]any{"enabled": true, "interval": int(b.cfg.IdleTimeout.Seconds()), "mode": "Disk"},
 				"autoDeletePolicy":  map[string]any{"enabled": true, "deleteIntervalInSeconds": int(b.cfg.TTL.Seconds())},
 			}}
-			body.SourcesRef.DiskImage.Name, body.SourcesRef.DiskImage.IsPublic = cfg.Disk, true
+			if cfg.DiskID != "" {
+				body.SourcesRef.DiskImage.ID = cfg.DiskID
+			} else {
+				body.SourcesRef.DiskImage.Name, body.SourcesRef.DiskImage.IsPublic = cfg.Disk, true
+			}
 			s, err := c.Create(ctx, body)
 			if err != nil {
 				return s, err

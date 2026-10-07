@@ -13,6 +13,7 @@ import (
 )
 
 type fixture struct {
+	created                           createRequest
 	box                               *sandbox
 	creates, deletes                  int
 	loseCreateResponse, hideInventory bool
@@ -26,6 +27,7 @@ func (f *fixture) request(t *testing.T, r *http.Request) (*http.Response, error)
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		f.created = body
 		f.box = &sandbox{ID: "unique-resource", State: "Running", Labels: body.Labels}
 		if f.loseCreateResponse {
 			return response(500, "uncertain"), nil
@@ -51,6 +53,38 @@ func (f *fixture) request(t *testing.T, r *http.Request) (*http.Response, error)
 	}
 	data, _ := json.Marshal(f.box)
 	return response(200, string(data)), nil
+}
+
+func TestPreparedDiskKeepsFreshLeaseOwnershipAndRejectsSourceChange(t *testing.T) {
+	f := &fixture{}
+	b, req := fixtureBackend(t, f)
+	b.cfg.AzureSandbox.DiskID = "prepared-disk-id"
+	if _, err := b.acquire(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(f.created.SourcesRef)
+	if err != nil || string(wire) != `{"diskImage":{"id":"prepared-disk-id"}}` {
+		t.Fatalf("private disk reference = %s, error = %v", wire, err)
+	}
+	if f.created.Labels["crabbox_lease"] != req.RequestedLeaseID || f.created.Labels["crabbox_attempt"] == "" || f.created.Lifecycle["autoSuspendPolicy"] == nil {
+		t.Fatal("prepared disk lost fresh ownership or lifecycle")
+	}
+	b.cfg.AzureSandbox.DiskID = "replacement-disk-id"
+	if _, err := b.acquire(t.Context(), req); err == nil || f.creates != 1 {
+		t.Fatal("lease replay changed its prepared disk")
+	}
+	if err := b.Stop(t.Context(), core.StopRequest{ID: req.RequestedLeaseID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreparedDiskRejectsConflictingPublicSource(t *testing.T) {
+	f := &fixture{}
+	b, req := fixtureBackend(t, f)
+	b.cfg.AzureSandbox.DiskID, b.cfg.AzureSandbox.Disk = "prepared-disk-id", "other-public-image"
+	if _, err := b.acquire(t.Context(), req); err == nil || f.creates != 0 {
+		t.Fatal("ambiguous disk source allocated")
+	}
 }
 
 func fixtureBackend(t *testing.T, f *fixture) (*backend, core.FixedWarmupRequest) {

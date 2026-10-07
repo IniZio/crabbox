@@ -11,4 +11,5 @@ type AzureSandboxConfig struct {
 	Region        string `config:"region" env:"CRABBOX_AZURE_SANDBOX_REGION" flag:"azure-sandbox-region" sources:"user,env,flag" help:"ACA Sandbox group region" fileIgnoreEmpty:"true" fileStorage:"value"`
 	ClientID      string `config:"clientId" env:"CRABBOX_AZURE_SANDBOX_CLIENT_ID" flag:"azure-sandbox-client-id" sources:"user,env,flag" help:"Allocator managed identity client ID" fileIgnoreEmpty:"true" fileStorage:"value"`
 	Disk          string `config:"disk" env:"CRABBOX_AZURE_SANDBOX_DISK" flag:"azure-sandbox-disk" sources:"user,repo,env,flag" help:"Public ACA disk image" default:"ubuntu" fileIgnoreEmpty:"true" fileStorage:"value"`
+	DiskID        string `config:"diskId" env:"CRABBOX_AZURE_SANDBOX_DISK_ID" flag:"azure-sandbox-disk-id" sources:"user,env,flag" help:"Prepared private ACA disk image ID in the configured group" fileIgnoreEmpty:"true" fileStorage:"value"`
 }
