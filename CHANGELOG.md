@@ -4,6 +4,7 @@
 
 ### Changes
 
+- AWS Windows leases: default the stock AMI fallback to Server 2025 in direct and brokered mode while preserving explicit Server 2022 selection and promoted-image precedence. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
 - AWS Windows images: enable guarded Server 2025 bakes from stock with source-only OS selection, guest-version proof, and matching Server Core containers; explicit Server 2022 leases retain stock selection. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
 
 ### Fixes
