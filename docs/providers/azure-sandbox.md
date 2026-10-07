@@ -25,6 +25,7 @@ command argument. The regional data-plane host is derived from the region.
 crabbox warmup --provider azure-sandbox --lease-id cbx_012345abcdef \
   --class small --ttl 4h --idle-timeout 15m --keep
 crabbox inspect --provider azure-sandbox --id cbx_012345abcdef --json
+crabbox cp --provider azure-sandbox --id cbx_012345abcdef ./repository.pack SANDBOX:/workspace/repository.pack
 printf 'printf "hello\n"\n' | crabbox run --provider azure-sandbox \
   --id cbx_012345abcdef --keep --no-sync --script-stdin
 crabbox heartbeat --provider azure-sandbox --id cbx_012345abcdef --json
@@ -37,7 +38,9 @@ class names do not provision larger machines. `--azure-sandbox-disk` selects a
 public disk name. SSH, desktop, archive synchronization and snapshot forks are
 not advertised. The caller owns workspace preparation, using kept leases and
 `--no-sync`; shell scripts and explicitly allowlisted environment profiles reuse
-the normal CLI input path.
+the normal CLI input path. `cp` uploads regular local files through the native
+file API under the same repository claim fence; directory copies and downloads
+are not advertised by this initial adapter.
 
 Fixed leases use the common durable journal. Sandbox IDs are server-generated;
 immutable labels bind a resource to the recorded attempt. A lost create response

@@ -3,6 +3,7 @@ package azuresandbox
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,7 +32,16 @@ func TestSandboxCLIWorkerLifecycle(t *testing.T) {
 	}
 	f := &fixture{}
 	commands := 0
+	uploads := 0
 	c := fixtureClient(t, func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/files") {
+			data, err := io.ReadAll(r.Body)
+			if err != nil || string(data) != "repository-pack" || r.URL.Query().Get("path") != "/workspace/repository.pack" {
+				t.Fatal("repository upload changed")
+			}
+			uploads++
+			return response(200, ""), nil
+		}
 		if !strings.HasSuffix(r.URL.Path, "/executeShellCommand") {
 			return f.request(t, r)
 		}
@@ -73,9 +83,26 @@ func TestSandboxCLIWorkerLifecycle(t *testing.T) {
 	if strings.Contains(stderr.String(), "synthetic-token") {
 		t.Fatal("forwarded token leaked")
 	}
+	pack := filepath.Join(dir, "repository.pack")
+	if err := os.WriteFile(pack, []byte("repository-pack"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("cp", "--provider", providerName, "--id", lease, pack, "SANDBOX:/workspace/repository.pack")
+	other := t.TempDir()
+	t.Chdir(other)
+	if out, err := exec.Command("git", "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if err := app.Run(t.Context(), []string{"cp", "--provider", providerName, "--id", lease, pack, "SANDBOX:/workspace/repository.pack"}); err == nil {
+		t.Fatal("another repository uploaded through this lease")
+	}
+	if uploads != 1 {
+		t.Fatal("denied upload reached the Sandbox")
+	}
+	t.Chdir(dir)
 	run("heartbeat", "--provider", providerName, "--id", lease, "--json")
 	run("stop", "--provider", providerName, "--id", lease)
-	if f.creates != 1 || f.deletes != 1 || commands != 2 {
+	if f.creates != 1 || f.deletes != 1 || commands != 2 || uploads != 1 {
 		t.Fatalf("unexpected effects: %+v commands=%d", f, commands)
 	}
 }

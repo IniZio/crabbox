@@ -458,6 +458,7 @@ type PortsRequest struct {
 
 type CopyRequest struct {
 	Options     LeaseOptions
+	RepoRoot    string
 	ID          string
 	Source      string
 	Destination string

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	core "github.com/openclaw/crabbox/internal/cli"
@@ -252,4 +254,66 @@ func (b *backend) Heartbeat(ctx context.Context, req core.LeaseHeartbeatRequest)
 		return nil
 	})
 	return core.LeaseHeartbeatResult{LeaseID: claim.LeaseID, Slug: claim.Slug, State: "Running", LastTouchedAt: time.Now()}, err
+}
+
+// Repository preparation transfers regular files through the existing cp seam.
+func (b *backend) Copy(ctx context.Context, req core.CopyRequest) error {
+	prefix, destination, ok := strings.Cut(req.Destination, ":")
+	if !ok || !strings.EqualFold(prefix, "SANDBOX") || !strings.HasPrefix(destination, "/") {
+		return fmt.Errorf("ACA Sandbox cp currently supports local regular-file uploads to SANDBOX:/absolute/path")
+	}
+	claim, err := b.claim(req.ID)
+	if err != nil {
+		return err
+	}
+	if req.RepoRoot == "" {
+		return fmt.Errorf("ACA Sandbox upload requires its repository owner")
+	}
+	if err := core.CheckLeaseClaimRepositoryOwner(req.ID, claim, req.RepoRoot, false); err != nil {
+		return err
+	}
+	deadline, err := executionDeadline(claim)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	info, err := os.Lstat(req.Source)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 && !req.FollowLink {
+		return fmt.Errorf("ACA Sandbox upload of a symlink requires -L")
+	}
+	if req.FollowLink && info.Mode()&os.ModeSymlink != 0 {
+		info, err = os.Stat(req.Source)
+		if err != nil {
+			return err
+		}
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("ACA Sandbox upload requires a regular file")
+	}
+	input, err := os.Open(req.Source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	info, err = input.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("ACA Sandbox upload requires a regular file")
+	}
+	return core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
+		s, err := b.inspect(ctx, claim)
+		if err != nil {
+			return err
+		}
+		if s.State != "Running" {
+			return fmt.Errorf("ACA Sandbox upload requires a running lease")
+		}
+		return b.api.Upload(ctx, s.ID, destination, input)
+	})
 }
