@@ -85,6 +85,7 @@ type Config struct {
 	AWSLambdaMicroVM              AWSLambdaMicroVMConfig
 	Azure                         AzureConfig
 	AzureDynamicSessions          AzureDynamicSessionsConfig
+	AzureSandbox                  AzureSandboxConfig
 	GCP                           GCPConfig
 	DigitalOcean                  DigitalOceanConfig
 	digitalOceanImageExplicit     bool
@@ -1539,6 +1540,7 @@ func baseConfig() Config {
 		AWSLambdaMicroVM:        defaultAWSLambdaMicroVMConfig(),
 		Azure:                   initialAzureConfig(azureImage),
 		AzureDynamicSessions:    defaultAzureDynamicSessionsConfig(),
+		AzureSandbox:            defaultAzureSandboxConfig(),
 		GCP:                     initialGCPConfig(gcpImage),
 		DigitalOcean:            defaultDigitalOceanConfig(),
 		Vultr:                   defaultVultrConfig(),
@@ -1709,6 +1711,7 @@ type fileConfig struct {
 	AWSLambdaMicroVM         *fileAWSLambdaMicroVMConfig         `yaml:"awsLambdaMicroVM,omitempty"`
 	Azure                    *fileAzureConfig                    `yaml:"azure,omitempty"`
 	AzureDynamicSessions     *fileAzureDynamicSessionsConfig     `yaml:"azureDynamicSessions,omitempty"`
+	AzureSandbox             *fileAzureSandboxConfig             `yaml:"azureSandbox,omitempty"`
 	GCP                      *fileGCPConfig                      `yaml:"gcp,omitempty"`
 	Incus                    *fileIncusConfig                    `yaml:"incus,omitempty"`
 	Proxmox                  *fileProxmoxConfig                  `yaml:"proxmox,omitempty"`
@@ -2728,6 +2731,13 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 		}
 	}
 	cfg.applyAzureFileConfig(file.Azure, inputSource)
+	{
+		applied, err := cfg.AzureSandbox.applyFile(file.AzureSandbox, trusted)
+		recordConfigInput(cfg, "azure-sandbox", inputSource, applied.InputAccepted)
+		if err != nil {
+			return err
+		}
+	}
 	{
 		applied, err := cfg.AzureDynamicSessions.applyFile(file.AzureDynamicSessions)
 		recordConfigInput(cfg, "azure-dynamic-sessions", inputSource, applied.InputAccepted)
@@ -4015,6 +4025,13 @@ func applyEnv(cfg *Config) error {
 		recordConfigInput(cfg, "aws", configInputEnvironment, true)
 	}
 	cfg.applyAzureEnvironment()
+	{
+		applied, err := cfg.AzureSandbox.applyEnv()
+		recordConfigInput(cfg, "azure-sandbox", configInputEnvironment, applied.InputAccepted)
+		if err != nil {
+			return err
+		}
+	}
 	{
 		applied, err := cfg.AzureDynamicSessions.applyEnv()
 		recordConfigInput(cfg, "azure-dynamic-sessions", configInputEnvironment, applied.InputAccepted)
