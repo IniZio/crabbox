@@ -168,32 +168,15 @@ func (b *backend) acquire(ctx context.Context, req core.FixedWarmupRequest) (cor
 			return s, nil
 		},
 		PrepareAccess: func(ctx context.Context, tx *core.FixedTransaction, s sandbox) (core.LeaseTarget, error) {
-			for s.State != "Running" {
-				if s.State == "Failed" || s.State == "Disabled" || s.State == "Stopped" {
-					return core.LeaseTarget{}, fmt.Errorf("ACA Sandbox is %s", s.State)
-				}
-				select {
-				case <-ctx.Done():
-					return core.LeaseTarget{}, ctx.Err()
-				case <-time.After(time.Second):
-				}
-				var err error
-				s, err = c.Get(ctx, s.ID)
-				if err != nil {
-					return core.LeaseTarget{}, err
-				}
-			}
-			observed, err := b.observe(ctx, tx, core.FixedObserveAcquire)
-			if err != nil {
-				return core.LeaseTarget{}, err
-			}
-			if len(observed.Candidates) != 1 || observed.Candidates[0].State != "Running" {
-				return core.LeaseTarget{}, fmt.Errorf("ACA Sandbox readiness or ownership is unconfirmed")
-			}
-			s = observed.Candidates[0]
 			deadline, err := time.Parse(time.RFC3339Nano, tx.Claim.FixedCreateIntent.Attempt["expires_at"])
 			if err != nil || !deadline.After(time.Now()) {
 				return core.LeaseTarget{}, fmt.Errorf("ACA Sandbox allocation expired; release the lease")
+			}
+			ctx, cancel := context.WithDeadline(ctx, deadline)
+			defer cancel()
+			s, err = b.ensureRunning(ctx, *tx.Claim)
+			if err != nil {
+				return core.LeaseTarget{}, err
 			}
 			return core.LeaseTarget{LeaseID: tx.Claim.LeaseID, Server: core.Server{Provider: providerName, CloudID: s.ID, ImmutableID: s.ID, Labels: s.Labels, Status: s.State}}, nil
 		},

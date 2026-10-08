@@ -75,6 +75,9 @@ func TestSandboxCLIWorkerLifecycle(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &state); err != nil || !state.Ready || state.ServerID != "unique-resource" {
 		t.Fatalf("inspect: %s %v", stdout.String(), err)
 	}
+	// Exercise the user-facing slug published by warmup through every command.
+	lease = state.Slug
+	run("inspect", "--provider", providerName, "--id", lease, "--json")
 	profile := filepath.Join(dir, "private.env")
 	if err := os.WriteFile(profile, []byte("BOOTSTRAP_TOKEN=synthetic-token\n"), 0600); err != nil {
 		t.Fatal(err)

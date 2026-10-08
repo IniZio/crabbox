@@ -57,7 +57,10 @@ the claim and require reconciliation. Stop checks the exact owned resource and
 waits for deletion readback before publishing the common terminal receipt.
 
 The original TTL bounds execution admission and heartbeats. Platform auto-suspend
-uses the idle interval; auto-delete runs after the Sandbox stops. Those platform
+uses the idle interval. Within that original TTL, warmup replay, commands, uploads
+and heartbeats resume an owned idle Sandbox and recheck ownership before use.
+Administratively disabled Sandboxes are never enabled automatically. Auto-delete
+runs after the Sandbox stops. Those platform
 policies are not an absolute wall-clock deletion guarantee. Transport failure or
 cancellation cannot prove the remote command exited: the lease remains owned
 until resource cleanup settles. Live acceptance must qualify deletion, idle

@@ -38,7 +38,7 @@ func (b *backend) WarmupFixed(ctx context.Context, req core.FixedWarmupRequest) 
 }
 
 func (b *backend) claim(id string) (core.LeaseClaim, error) {
-	claim, exists, err := core.ReadLeaseClaimWithPresence(id)
+	claim, exists, err := shared.ResolveProviderClaimStrict(id, providerName, (Provider{}).ClaimScope(b.cfg))
 	if err != nil {
 		return claim, err
 	}
@@ -54,6 +54,9 @@ func executionDeadline(claim core.LeaseClaim) (time.Time, error) {
 	i := claim.FixedCreateIntent
 	if i == nil || i.State != "acquired" || claim.CloudID == "" {
 		return time.Time{}, fmt.Errorf("ACA Sandbox has no completed allocation")
+	}
+	if i.Journal != nil && i.Journal.Phase == "deleting" {
+		return time.Time{}, fmt.Errorf("ACA Sandbox cleanup is in progress; retry stop before using another lease")
 	}
 	deadline, err := time.Parse(time.RFC3339Nano, i.Attempt["expires_at"])
 	if err != nil || !deadline.After(time.Now()) {
@@ -90,6 +93,43 @@ func (b *backend) inspect(ctx context.Context, claim core.LeaseClaim) (sandbox, 
 		return sandbox{}, fmt.Errorf("ACA Sandbox resource is missing or uncertain; reconcile this lease")
 	}
 	return observed.Candidates[0], nil
+}
+
+// Callers hold the claim fence and bound ctx by the original allocation TTL.
+// Recheck exact ownership on every observation, including after activation.
+func (b *backend) ensureRunning(ctx context.Context, claim core.LeaseClaim) (sandbox, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	resumed := false
+	for {
+		s, err := b.inspect(ctx, claim)
+		if err != nil {
+			return sandbox{}, err
+		}
+		if s.StateDetails.StoppedReason == "Disabled" {
+			return sandbox{}, fmt.Errorf("ACA Sandbox is administratively disabled")
+		}
+		switch s.State {
+		case "Running":
+			return s, nil
+		case "Stopped", "Suspended", "Idle":
+			if !resumed {
+				if err := b.api.Resume(ctx, s.ID); err != nil {
+					return sandbox{}, err
+				}
+				resumed = true
+			}
+		case "Creating", "Starting", "Resuming", "Stopping", "Suspending":
+			// Wait for an in-progress transition without submitting it again.
+		default:
+			return sandbox{}, fmt.Errorf("ACA Sandbox cannot run in state %s", s.State)
+		}
+		select {
+		case <-ctx.Done():
+			return sandbox{}, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func (b *backend) Status(ctx context.Context, req core.StatusRequest) (core.StatusView, error) {
@@ -160,7 +200,8 @@ func (b *backend) Run(ctx context.Context, req core.RunRequest) (core.RunResult,
 	if err != nil {
 		return core.RunResult{}, err
 	}
-	if err := core.CheckLeaseClaimRepositoryOwner(req.ID, claim, req.Repo.Root, false); err != nil {
+	req.ID = claim.LeaseID
+	if err := core.CheckLeaseClaimRepositoryOwner(claim.LeaseID, claim, req.Repo.Root, false); err != nil {
 		return core.RunResult{}, err
 	}
 	deadline, err := executionDeadline(claim)
@@ -175,12 +216,9 @@ func (b *backend) Run(ctx context.Context, req core.RunRequest) (core.RunResult,
 	}
 	var result core.RunResult
 	err = core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
-		s, err := b.inspect(ctx, claim)
+		_, err := b.ensureRunning(ctx, claim)
 		if err != nil {
 			return err
-		}
-		if s.State != "Running" {
-			return fmt.Errorf("ACA Sandbox execution requires a running lease")
 		}
 		var runErr error
 		result, runErr = shared.RunDelegatedSandbox(ctx, req, shared.DelegatedSandboxLifecycle{
@@ -237,12 +275,9 @@ func (b *backend) Heartbeat(ctx context.Context, req core.LeaseHeartbeatRequest)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	err = core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
-		s, err := b.inspect(ctx, claim)
+		s, err := b.ensureRunning(ctx, claim)
 		if err != nil {
 			return err
-		}
-		if s.State != "Running" {
-			return fmt.Errorf("ACA Sandbox heartbeat requires a running lease")
 		}
 		out, err := b.api.Exec(ctx, s.ID, "true", "")
 		if err != nil {
@@ -269,7 +304,7 @@ func (b *backend) Copy(ctx context.Context, req core.CopyRequest) error {
 	if req.RepoRoot == "" {
 		return fmt.Errorf("ACA Sandbox upload requires its repository owner")
 	}
-	if err := core.CheckLeaseClaimRepositoryOwner(req.ID, claim, req.RepoRoot, false); err != nil {
+	if err := core.CheckLeaseClaimRepositoryOwner(claim.LeaseID, claim, req.RepoRoot, false); err != nil {
 		return err
 	}
 	deadline, err := executionDeadline(claim)
@@ -307,12 +342,9 @@ func (b *backend) Copy(ctx context.Context, req core.CopyRequest) error {
 		return fmt.Errorf("ACA Sandbox upload requires a regular file")
 	}
 	return core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
-		s, err := b.inspect(ctx, claim)
+		s, err := b.ensureRunning(ctx, claim)
 		if err != nil {
 			return err
-		}
-		if s.State != "Running" {
-			return fmt.Errorf("ACA Sandbox upload requires a running lease")
 		}
 		return b.api.Upload(ctx, s.ID, destination, input)
 	})

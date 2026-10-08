@@ -179,3 +179,46 @@ func TestWrongAttemptCannotBeAdoptedOrDeleted(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxSlugResolutionIsScopedAndRejectsAmbiguity(t *testing.T) {
+	for _, scenario := range []string{"ambiguous", "other-scope", "other-provider"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := &fixture{}
+			b, req := fixtureBackend(t, f)
+			if _, err := b.acquire(t.Context(), req); err != nil {
+				t.Fatal(err)
+			}
+			original, err := b.claim(req.RequestedLeaseID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := original
+			second.LeaseID = "cbx_123456abcdef"
+			if scenario == "other-scope" {
+				second.ProviderScope += "-other"
+			}
+			if scenario == "other-provider" {
+				second.Provider = "other-provider"
+			}
+			if err := core.WithDurableLeaseClaimLockContext(t.Context(), second.LeaseID, func(c *core.LeaseClaim, _ bool, persist func() error) error {
+				*c = second
+				return persist()
+			}); err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := b.claim(original.Slug)
+			if scenario == "ambiguous" {
+				if err == nil {
+					t.Fatal("ambiguous slug resolved")
+				}
+			} else {
+				if err != nil || resolved.LeaseID != original.LeaseID {
+					t.Fatalf("scope changed resolution: %+v %v", resolved, err)
+				}
+				if _, err := b.claim(second.LeaseID); err == nil {
+					t.Fatal("foreign exact ID resolved")
+				}
+			}
+		})
+	}
+}

@@ -22,9 +22,12 @@ const apiVersion = "2026-02-01-preview"
 const tokenScope = "https://dynamicsessions.io/.default"
 
 type sandbox struct {
-	ID     string            `json:"id"`
-	State  string            `json:"state"`
-	Labels map[string]string `json:"labels"`
+	ID           string            `json:"id"`
+	State        string            `json:"state"`
+	Labels       map[string]string `json:"labels"`
+	StateDetails struct {
+		StoppedReason string `json:"stoppedReason"`
+	} `json:"stateDetails"`
 }
 
 type execResult struct {
@@ -205,6 +208,14 @@ func (c *client) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	return c.json(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (c *client) Resume(ctx context.Context, id string) error {
+	path, err := c.sandboxPath(id)
+	if err != nil {
+		return err
+	}
+	return c.json(ctx, http.MethodPost, path+"/resume", nil, nil)
 }
 
 func (c *client) Exec(ctx context.Context, id, command, workdir string) (execResult, error) {

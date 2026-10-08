@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +104,62 @@ func TestSandboxExpiredAllocationCannotExecuteOrRenew(t *testing.T) {
 	claim.FixedCreateIntent.Attempt["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339Nano)
 	if _, err := executionDeadline(claim); err == nil {
 		t.Fatal("released allocation admitted")
+	}
+}
+
+func TestSandboxInterruptedStopBlocksActivityAndAllowsRetry(t *testing.T) {
+	f := &fixture{}
+	b, acquire := fixtureBackend(t, f)
+	if _, err := b.acquire(t.Context(), acquire); err != nil {
+		t.Fatal(err)
+	}
+	b.api.http.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			return response(503, "unavailable"), nil
+		}
+		return f.request(t, r)
+	})
+	if err := b.Stop(t.Context(), core.StopRequest{ID: acquire.RequestedLeaseID}); err == nil {
+		t.Fatal("failed deletion reported success")
+	}
+	before, err := b.claim(acquire.RequestedLeaseID)
+	if err != nil || before.FixedCreateIntent.Journal.Phase != "deleting" || f.box.State != "Running" {
+		t.Fatalf("expected retained deleting claim and live resource: %+v %v", before, err)
+	}
+	requests := 0
+	b.api.http.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		return f.request(t, r)
+	})
+	file := filepath.Join(t.TempDir(), "input")
+	if err := os.WriteFile(file, []byte("must not upload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"run", "copy", "heartbeat"} {
+		// Reconstruct the adapter and reload the persisted claim for every call.
+		fresh := &backend{cfg: b.cfg, rt: b.rt, api: b.api}
+		var err error
+		switch operation {
+		case "run":
+			_, err = fresh.Run(t.Context(), core.RunRequest{ID: acquire.RequestedLeaseID, Repo: acquire.Repo, Keep: true, NoSync: true, Command: []string{"true"}})
+		case "copy":
+			err = fresh.Copy(t.Context(), core.CopyRequest{ID: acquire.RequestedLeaseID, RepoRoot: acquire.Repo.Root, Source: file, Destination: "SANDBOX:/tmp/input"})
+		case "heartbeat":
+			_, err = fresh.Heartbeat(t.Context(), core.LeaseHeartbeatRequest{ID: acquire.RequestedLeaseID})
+		}
+		if err == nil || !strings.Contains(err.Error(), "cleanup is in progress") || requests != 0 {
+			t.Fatalf("%s: err=%v requests=%d", operation, err, requests)
+		}
+		after, err := b.claim(acquire.RequestedLeaseID)
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("%s changed retained claim: %v", operation, err)
+		}
+	}
+	if err := b.Stop(t.Context(), core.StopRequest{ID: acquire.RequestedLeaseID}); err != nil {
+		t.Fatal(err)
+	}
+	if f.deletes != 1 || f.box != nil {
+		t.Fatal("exact deletion retry did not finish")
 	}
 }
 
