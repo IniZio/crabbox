@@ -53,8 +53,10 @@ Fixed leases use the common durable journal. Sandbox IDs are server-generated;
 immutable labels bind a resource to the recorded attempt. A lost create response
 is reconciled by that binding, never by issuing another create after an empty
 list. A known pre-submission attempt may continue. Ambiguous observations retain
-the claim and require reconciliation. Stop checks the exact owned resource and
-waits for deletion readback before publishing the common terminal receipt.
+the claim and require reconciliation. Stop can interrupt an active command,
+upload or heartbeat: it cancels the local request wait, then checks and deletes
+the exact owned resource. It waits for deletion readback before publishing the
+common terminal receipt; cancellation alone is not proof of remote termination.
 
 The original TTL bounds execution admission and heartbeats. Platform auto-suspend
 uses the idle interval. Within that original TTL, warmup replay, commands, uploads

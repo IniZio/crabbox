@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	core "github.com/openclaw/crabbox/internal/cli"
 )
@@ -86,6 +85,8 @@ func TestSandboxResumePreservesOwnershipAndDisabledGuards(t *testing.T) {
 				f.box.Labels["crabbox_attempt"] = "foreign"
 			}
 			resumes, commands := 0, 0
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			b.api.http.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
 				if strings.HasSuffix(r.URL.Path, "/resume") {
 					resumes++
@@ -94,6 +95,10 @@ func TestSandboxResumePreservesOwnershipAndDisabledGuards(t *testing.T) {
 					}
 					if scenario != "cancelled-wait" {
 						f.box.State = "Running"
+					} else {
+						// Cancel only after admission, rather than racing claim I/O
+						// against an arbitrary wall-clock deadline.
+						cancel()
 					}
 					if scenario == "foreign-after" {
 						f.box.Labels["crabbox_attempt"] = "foreign"
@@ -105,12 +110,6 @@ func TestSandboxResumePreservesOwnershipAndDisabledGuards(t *testing.T) {
 				}
 				return f.request(t, r)
 			})
-			ctx := t.Context()
-			if scenario == "cancelled-wait" {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
-				defer cancel()
-			}
 			_, err := b.Run(ctx, core.RunRequest{ID: req.RequestedLeaseID, Repo: req.Repo, Keep: true, NoSync: true, Command: []string{"true"}})
 			if err == nil || commands != 0 || f.deletes != 0 {
 				t.Fatalf("err=%v commands=%d deletes=%d", err, commands, f.deletes)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -79,7 +80,10 @@ func (b *backend) List(ctx context.Context, _ core.ListRequest) ([]core.LeaseVie
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, core.Server{Provider: providerName, CloudID: s.ID, ImmutableID: s.ID, Name: claim.Slug, Status: s.State, Labels: s.Labels})
+		labels := maps.Clone(s.Labels)
+		labels["lease"], labels["slug"], labels["target"] = claim.LeaseID, claim.Slug, core.TargetLinux
+		labels["keep"] = "true" // Acquisition requires a kept lease.
+		result = append(result, core.Server{Provider: providerName, CloudID: s.ID, ImmutableID: s.ID, Name: claim.Slug, Status: s.State, Labels: labels})
 	}
 	return result, nil
 }
@@ -167,6 +171,13 @@ func (b *backend) stop(ctx context.Context, req core.StopRequest, root string) e
 	if err != nil {
 		return err
 	}
+	if claim.FixedCreateIntent.State == "acquired" && (claim.FixedCreateIntent.Journal == nil || claim.FixedCreateIntent.Journal.Phase != "deleting") {
+		release, err := b.interruptActivity(ctx, claim, root)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	return core.DeleteFixedResource(ctx, leaseKind, claim, core.FixedLeaseOperations[sandbox]{
 		Release:      &core.FixedReleasePolicy{RepoRoot: root, SkipTerminalObservation: true},
 		ObserveExact: b.observe,
@@ -214,53 +225,51 @@ func (b *backend) Run(ctx context.Context, req core.RunRequest) (core.RunResult,
 	if err != nil {
 		return core.RunResult{}, err
 	}
-	var result core.RunResult
-	err = core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
-		_, err := b.ensureRunning(ctx, claim)
-		if err != nil {
-			return err
-		}
-		var runErr error
-		result, runErr = shared.RunDelegatedSandbox(ctx, req, shared.DelegatedSandboxLifecycle{
-			Provider: providerName, Runtime: b.rt, Workdir: "/workspace", TTL: b.cfg.TTL, IdleTimeout: b.cfg.IdleTimeout,
-			Resolve: func(context.Context) (shared.DelegatedSandbox, error) {
-				return shared.DelegatedSandbox{LeaseID: claim.LeaseID, Slug: claim.Slug,
-					CleanupCommand: "crabbox stop --provider azure-sandbox --id " + core.ShellQuote(claim.LeaseID)}, nil
-			},
-			Workspace: func() shared.SandboxWorkspace {
-				return shared.WorkspaceOperations{EnsureFunc: func(context.Context) error { return nil }}
-			},
-			Command: func(context.Context) (shared.DelegatedSandboxCommand, error) {
-				commandArgs, shellMode := req.Command, req.ShellMode
-				literalArgs := req.CommandLiteralArgs
-				if req.Script != nil {
-					commandArgs = append([]string{"bash", "-c", string(req.Script.Data), "crabbox-script"}, req.Command...)
-					shellMode = false
-					literalArgs = nil
-				}
-				intent, err := core.ParseCommandIntent(commandArgs, shellMode, literalArgs)
+	return shared.RunDelegatedSandbox(ctx, req, shared.DelegatedSandboxLifecycle{
+		Provider: providerName, Runtime: b.rt, Workdir: "/workspace", TTL: b.cfg.TTL, IdleTimeout: b.cfg.IdleTimeout,
+		Resolve: func(context.Context) (shared.DelegatedSandbox, error) {
+			return shared.DelegatedSandbox{LeaseID: claim.LeaseID, Slug: claim.Slug,
+				CleanupCommand: "crabbox stop --provider azure-sandbox --id " + core.ShellQuote(claim.LeaseID)}, nil
+		},
+		Workspace: func() shared.SandboxWorkspace {
+			return shared.WorkspaceOperations{EnsureFunc: func(context.Context) error { return nil }}
+		},
+		Command: func(context.Context) (shared.DelegatedSandboxCommand, error) {
+			commandArgs, shellMode := req.Command, req.ShellMode
+			literalArgs := req.CommandLiteralArgs
+			if req.Script != nil {
+				commandArgs = append([]string{"bash", "-c", string(req.Script.Data), "crabbox-script"}, req.Command...)
+				shellMode = false
+				literalArgs = nil
+			}
+			intent, err := core.ParseCommandIntent(commandArgs, shellMode, literalArgs)
+			if err != nil {
+				return shared.DelegatedSandboxCommand{}, err
+			}
+			command := shared.ShellWorkspaceCommand("/workspace", req.Env, intent, "bash", "-c")
+			return shared.DelegatedSandboxCommand{Text: intent.ShellScript(), Run: func(ctx context.Context, stdout, stderr io.Writer) (int, error) {
+				var out execResult
+				err := withActivity(ctx, claim, func(ctx context.Context) error {
+					if _, err := b.ensureRunning(ctx, claim); err != nil {
+						return err
+					}
+					var err error
+					out, err = c.Exec(ctx, claim.CloudID, command, "")
+					return err
+				})
 				if err != nil {
-					return shared.DelegatedSandboxCommand{}, err
+					return 1, err
 				}
-				command := shared.ShellWorkspaceCommand("/workspace", req.Env, intent, "bash", "-c")
-				return shared.DelegatedSandboxCommand{Text: intent.ShellScript(), Run: func(ctx context.Context, stdout, stderr io.Writer) (int, error) {
-					out, err := c.Exec(ctx, claim.CloudID, command, "")
-					if err != nil {
-						return 1, err
-					}
-					if _, err := io.WriteString(stdout, out.Stdout); err != nil {
-						return 1, err
-					}
-					if _, err := io.WriteString(stderr, out.Stderr); err != nil {
-						return 1, err
-					}
-					return *out.ExitCode, nil
-				}}, nil
-			},
-		})
-		return runErr
+				if _, err := io.WriteString(stdout, out.Stdout); err != nil {
+					return 1, err
+				}
+				if _, err := io.WriteString(stderr, out.Stderr); err != nil {
+					return 1, err
+				}
+				return *out.ExitCode, nil
+			}}, nil
+		},
 	})
-	return result, err
 }
 
 func (b *backend) Heartbeat(ctx context.Context, req core.LeaseHeartbeatRequest) (core.LeaseHeartbeatResult, error) {
@@ -274,7 +283,7 @@ func (b *backend) Heartbeat(ctx context.Context, req core.LeaseHeartbeatRequest)
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	err = core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
+	err = withActivity(ctx, claim, func(ctx context.Context) error {
 		s, err := b.ensureRunning(ctx, claim)
 		if err != nil {
 			return err
@@ -341,7 +350,7 @@ func (b *backend) Copy(ctx context.Context, req core.CopyRequest) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("ACA Sandbox upload requires a regular file")
 	}
-	return core.WithLeaseClaimUnchangedShared(ctx, claim.LeaseID, claim, func() error {
+	return withActivity(ctx, claim, func(ctx context.Context) error {
 		s, err := b.ensureRunning(ctx, claim)
 		if err != nil {
 			return err

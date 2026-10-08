@@ -78,6 +78,13 @@ func TestSandboxCLIWorkerLifecycle(t *testing.T) {
 	// Exercise the user-facing slug published by warmup through every command.
 	lease = state.Slug
 	run("inspect", "--provider", providerName, "--id", lease, "--json")
+	run("list", "--provider", providerName)
+	if !strings.Contains(stdout.String(), "lease="+state.ID) || !strings.Contains(stdout.String(), "slug="+state.Slug) || !strings.Contains(stdout.String(), "keep=true target=linux") {
+		t.Fatalf("list omitted usable identity: %s", stdout.String())
+	}
+	if _, ok := f.box.Labels["lease"]; ok {
+		t.Fatal("list projection modified remote ownership labels")
+	}
 	profile := filepath.Join(dir, "private.env")
 	if err := os.WriteFile(profile, []byte("BOOTSTRAP_TOKEN=synthetic-token\n"), 0600); err != nil {
 		t.Fatal(err)
