@@ -265,7 +265,7 @@ type IdempotentLeaseIDBackend interface {
 }
 ```
 
-The ASCII Box, AWS, Azure, DigitalOcean, Daytona, Incus, Linode, Machine0, local-container, Parallels,
+The ASCII Box, AWS, Azure, DigitalOcean, Daytona, GitHub Codespaces, Incus, Linode, Machine0, local-container, Parallels,
 Proxmox, RunPod, and Tenki direct backends implement this capability; coordinator-backed
 leases support it through the coordinator wrapper. External
 backends support it only when their configured protocol explicitly advertises
@@ -273,7 +273,9 @@ idempotent lease IDs. `crabbox warmup --lease-id` rejects other backends before
 provisioning. Built-in direct adapters use `core.AcquireFixedResource` and
 `core.FixedLeaseOperations[T]`: `DescribeIntent`, `Plan`, `ObserveExact`,
 `Submit`, `PrepareAccess`, and `DeleteExact`. Plans return native input data;
-core assembles labels and nonces, persists attempts, applies binding evidence,
+`DescribeIntent` may supply `FixedLeaseBinding.InitialLabels` so the first durable
+claim retains ownership and cleanup metadata even if planning fails. Core
+assembles labels and nonces, persists attempts, applies binding evidence,
 and publishes acquired and terminal records. Adapters supply native scope,
 identity, readiness, and exact-deletion proofs. Ordered `FixedIntentFields`
 preserve existing fingerprint field order, names, omission rules, and hash domains.
