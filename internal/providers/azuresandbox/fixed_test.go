@@ -28,6 +28,12 @@ func (f *fixture) request(t *testing.T, r *http.Request) (*http.Response, error)
 			t.Fatal(err)
 		}
 		f.created = body
+		// Match the live ACA service's label limit, including on private images.
+		for _, value := range body.Labels {
+			if len(value) > 63 {
+				return response(400, "label value exceeds 63 characters"), nil
+			}
+		}
 		f.box = &sandbox{ID: "unique-resource", State: "Running", Labels: body.Labels}
 		if f.loseCreateResponse {
 			return response(500, "uncertain"), nil
@@ -153,19 +159,23 @@ func TestUncertainCreateAdoptsOriginalAndNeverResubmits(t *testing.T) {
 }
 
 func TestWrongAttemptCannotBeAdoptedOrDeleted(t *testing.T) {
-	f := &fixture{}
-	b, req := fixtureBackend(t, f)
-	if _, err := b.acquire(t.Context(), req); err != nil {
-		t.Fatal(err)
-	}
-	f.box.Labels["crabbox_attempt"] = "other-owner"
-	if _, err := b.acquire(t.Context(), req); err == nil {
-		t.Fatal("adopted another owner")
-	}
-	if err := b.Stop(t.Context(), core.StopRequest{ID: req.RequestedLeaseID}); err == nil {
-		t.Fatal("deleted another owner")
-	}
-	if f.deletes != 0 {
-		t.Fatal("foreign resource deletion")
+	for _, label := range []string{"crabbox_attempt", "crabbox_fingerprint", "crabbox_lease"} {
+		t.Run(label, func(t *testing.T) {
+			f := &fixture{}
+			b, req := fixtureBackend(t, f)
+			if _, err := b.acquire(t.Context(), req); err != nil {
+				t.Fatal(err)
+			}
+			f.box.Labels[label] = "other-owner"
+			if _, err := b.acquire(t.Context(), req); err == nil {
+				t.Fatal("adopted another owner")
+			}
+			if err := b.Stop(t.Context(), core.StopRequest{ID: req.RequestedLeaseID}); err == nil {
+				t.Fatal("deleted another owner")
+			}
+			if f.deletes != 0 {
+				t.Fatal("foreign resource deletion")
+			}
+		})
 	}
 }

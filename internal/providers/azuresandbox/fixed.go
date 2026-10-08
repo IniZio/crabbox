@@ -2,6 +2,8 @@ package azuresandbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
 	"errors"
 	"fmt"
 	"maps"
@@ -58,6 +60,13 @@ func resourceBinding(s sandbox) core.FixedResourceBinding {
 
 func isMissing(err error) bool { var e *apiError; return errors.As(err, &e) && e.Status == 404 }
 
+// Azure limits label values to 63 characters. Keep the full intent fingerprint
+// in the journal and bind its digest using a 52-character, label-safe encoding.
+func fingerprintLabel(fingerprint string) string {
+	digest := sha256.Sum256([]byte(fingerprint))
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:])
+}
+
 func (b *backend) observe(ctx context.Context, tx *core.FixedTransaction, mode core.FixedObserveMode) (core.FixedObservation[sandbox], error) {
 	var out core.FixedObservation[sandbox]
 	claim := tx.Claim
@@ -95,7 +104,7 @@ func (b *backend) observe(ctx context.Context, tx *core.FixedTransaction, mode c
 		out.AbsenceProven = out.CanSubmit && mode == core.FixedObserveDelete
 	}
 	for _, s := range candidates {
-		if s.ID == "" || s.Labels["crabbox_lease"] != claim.LeaseID || s.Labels["crabbox_fingerprint"] != claim.FixedCreateIntent.Fingerprint || s.Labels["crabbox_attempt"] == "" || s.Labels["crabbox_attempt"] != claim.FixedCreateIntent.Attempt["nonce"] {
+		if s.ID == "" || s.Labels["crabbox_lease"] != claim.LeaseID || s.Labels["crabbox_fingerprint"] != fingerprintLabel(claim.FixedCreateIntent.Fingerprint) || s.Labels["crabbox_attempt"] == "" || s.Labels["crabbox_attempt"] != claim.FixedCreateIntent.Attempt["nonce"] {
 			return out, fmt.Errorf("ACA Sandbox ownership does not match the exact lease attempt")
 		}
 	}
@@ -136,7 +145,7 @@ func (b *backend) acquire(ctx context.Context, req core.FixedWarmupRequest) (cor
 			return core.FixedLeaseBinding{ProviderScope: (Provider{}).ClaimScope(b.cfg), Fingerprint: fingerprint, AllocateSlug: true, RequestedSlug: req.RequestedSlug}, err
 		},
 		Plan: func(_ context.Context, claim core.LeaseClaim) (core.FixedAttemptPlan, error) {
-			return core.FixedAttemptPlan{Values: map[string]string{"submission": "pending", "expires_at": time.Now().Add(b.cfg.TTL).UTC().Format(time.RFC3339Nano)}, NonceBytes: 16, NonceKey: "nonce", NonceLabel: "crabbox_attempt", FingerprintLabel: "crabbox_fingerprint", Labels: map[string]string{"crabbox_lease": claim.LeaseID}}, nil
+			return core.FixedAttemptPlan{Values: map[string]string{"submission": "pending", "expires_at": time.Now().Add(b.cfg.TTL).UTC().Format(time.RFC3339Nano)}, NonceBytes: 16, NonceKey: "nonce", NonceLabel: "crabbox_attempt", Labels: map[string]string{"crabbox_lease": claim.LeaseID, "crabbox_fingerprint": fingerprintLabel(claim.FixedCreateIntent.Fingerprint)}}, nil
 		},
 		ObserveExact: b.observe,
 		Submit: func(ctx context.Context, tx *core.FixedTransaction) (sandbox, error) {
