@@ -458,6 +458,7 @@ type PortsRequest struct {
 
 type CopyRequest struct {
 	Options     LeaseOptions
+	RepoRoot    string
 	ID          string
 	Source      string
 	Destination string
@@ -865,6 +866,8 @@ const (
 	FeatureRunArtifacts Feature = "run-artifacts"
 	FeatureRunDownloads Feature = "run-downloads"
 	FeatureModuleRun    Feature = "module-run"
+	// FeatureShellScriptRun admits shell script input to a delegated command owner.
+	FeatureShellScriptRun Feature = "shell-script-run"
 	// FeatureSSHScriptRun routes explicit scripts through the core SSH owner,
 	// while a hybrid backend may delegate ordinary commands.
 	FeatureSSHScriptRun Feature = "ssh-script-run"
@@ -2170,7 +2173,7 @@ func rejectDelegatedSyncOptionsForSpec(spec ProviderSpec, req RunRequest) error 
 	if req.StopAfter != "" {
 		return Exit(2, "%s delegates run execution; --stop-after is not supported", provider)
 	}
-	if (req.Script != nil || req.ScriptRequested) && !moduleRun {
+	if (req.Script != nil || req.ScriptRequested) && !moduleRun && !spec.Features.Has(FeatureShellScriptRun) {
 		return Exit(2, "%s delegates run execution; --script is not supported", provider)
 	}
 	if moduleRun && len(req.Command) > 0 {

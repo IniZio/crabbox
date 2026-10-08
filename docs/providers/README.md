@@ -6,8 +6,8 @@ Read when:
 - debugging provider-specific provisioning, sync, or command execution;
 - changing provider registration, flags, config, or backend behavior.
 
-Crabbox's catalog contains **80 built-in providers plus the `external` plugin
-contract** (81 entries). The compiled target lists include Linux, macOS, native
+Crabbox's catalog contains **81 built-in providers plus the `external` plugin
+contract** (82 entries). The compiled target lists include Linux, macOS, native
 Windows, WSL2, and a Worker-module runtime. Support varies by provider: a catalog
 entry is not a promise of credentials, capacity, desktop access, or arbitrary
 shell execution. Start with `crabbox providers recommend`, then inspect the
@@ -95,7 +95,7 @@ selection metadata. Regenerate it with `node scripts/generate-provider-matrix.mj
 `scripts/check-docs.sh` fails when provider registration, metadata, docs paths, or
 this generated table drift.
 
-Current built-in surface: 81 providers (46 SSH lease, 31 delegated run, 4 service control).
+Current built-in surface: 82 providers (46 SSH lease, 32 delegated run, 4 service control).
 
 Access terms:
 
@@ -115,6 +115,7 @@ Access terms:
 | [aws-lambda-microvm](aws-lambda-microvm.md) | built-in; `delegated-run` · delegated-sandbox | No SSH; `archive-sync` · direct only; features: `archive-sync`, `cleanup`, `run-session`, `pause-resume` | `linux`; AWS Lambda Firecracker MicroVM | `cloud`; GPU: no | Crabbox and Lambda MicroVM API; MicroVM termination | Isolated stateful ARM64 command execution | Requires a compatible Crabbox runner image; launch Regions and lifetime are limited |
 | [azure](azure.md) | built-in; `ssh-lease` · brokerable-cloud | Crabbox-managed SSH; `crabbox-sync` · coordinator optional; features: `ssh`, `crabbox-sync`, `cleanup`, `desktop`, `browser`, `code`, `tailscale`, `fixed-lease-id` | `linux`, `windows/normal`, `windows/wsl2`; Azure Virtual Machine | `cloud`; GPU: optional | Crabbox or coordinator; VM and owned resource delete | Linux or Windows workloads in Azure | Shared resource and identity setup is substantial |
 | [azure-dynamic-sessions](azure-dynamic-sessions.md) | built-in; `delegated-run` · delegated-sandbox | No SSH; `archive-sync` · direct only; features: `archive-sync`, `run-session` | `linux`; Azure Container Apps Dynamic Session | `cloud`; GPU: no | Azure session pool; provider session expiry | Short delegated container sessions in Azure | No Crabbox-managed SSH lease |
+| [azure-sandbox](azure-sandbox.md) | built-in; `delegated-run` · delegated-sandbox | No SSH; `none` · direct only; features: `shell-script-run`, `run-session`, `fixed-lease-id` | `linux`; Azure Container Apps Sandbox | `cloud`; GPU: no | Crabbox fixed lease and ACA Sandbox API; exact owned Sandbox delete | Kept Linux shell workloads with explicit file uploads | Requires an existing Sandbox group; runs require --keep --no-sync; one 2-CPU/4-GiB shape |
 | [blacksmith-testbox](blacksmith-testbox.md) (`blacksmith`) | built-in; `delegated-run` · ci-proof-runner | No SSH; `provider-owned` · direct only; features: `cache-volume`, `run-proof`, `run-session`, `run-artifacts`, `prepared-artifact-workspace` | `linux`; Blacksmith Testbox runner | `provider-managed`; GPU: no | Blacksmith; provider session cleanup | CI reproduction with proof and reusable sessions | Execution and artifacts follow the Testbox contract |
 | [blaxel](blaxel.md) | built-in; `delegated-run` · delegated-sandbox | No SSH; `archive-sync` · direct only; features: `archive-sync`, `cleanup`, `run-session` | `linux`; Blaxel managed Linux sandbox | `provider-managed`; GPU: unknown | Blaxel; owned sandbox delete | Managed delegated Linux sandbox execution | Requires Blaxel API credentials and workspace access |
 | [boxd](boxd.md) | built-in; `ssh-lease` · direct-cloud | Crabbox-managed SSH; `crabbox-sync` · direct only; features: `ssh`, `crabbox-sync`, `cleanup` | `linux`; boxd KVM microVM (Ubuntu 24.04) | `provider-managed`; GPU: no | TLS gRPC API + exec bootstrap; machine destroy (claim-gated) | Experimental isolated Linux microVM SSH leases | 2026-09-01: isolated creation verified over the gRPC API; guest port 8000 is publicly proxied without authentication |
@@ -201,7 +202,7 @@ but also supports coordinator-managed leases.
 | `brokerable-cloud` | 4 | [aws](aws.md), [azure](azure.md), [gcp](gcp.md), [hetzner](hetzner.md) |
 | `byo-ssh` | 1 | [ssh](ssh.md) |
 | `ci-proof-runner` | 2 | [blacksmith-testbox](blacksmith-testbox.md), [semaphore](semaphore.md) |
-| `delegated-sandbox` | 24 | [agent-sandbox](agent-sandbox.md), [aws-lambda-microvm](aws-lambda-microvm.md), [azure-dynamic-sessions](azure-dynamic-sessions.md), [blaxel](blaxel.md), [cloud-run-sandbox](cloud-run-sandbox.md), [cloudflare](cloudflare.md), [cloudflare-dynamic-workers](cloudflare-dynamic-workers.md), [cloudflare-sandbox](cloudflare-sandbox.md), [codesandbox](codesandbox.md), [crownest](crownest.md), [cubesandbox](cubesandbox.md), [e2b](e2b.md), [freestyle](freestyle.md), [islo](islo.md), [modal](modal.md), [nomad](nomad.md), [opencomputer](opencomputer.md), [opensandbox](opensandbox.md), [orgo](orgo.md), [smolvm](smolvm.md), [superserve](superserve.md), [tensorlake](tensorlake.md), [upstash-box](upstash-box.md), [vercel-sandbox](vercel-sandbox.md) |
+| `delegated-sandbox` | 25 | [agent-sandbox](agent-sandbox.md), [aws-lambda-microvm](aws-lambda-microvm.md), [azure-dynamic-sessions](azure-dynamic-sessions.md), [azure-sandbox](azure-sandbox.md), [blaxel](blaxel.md), [cloud-run-sandbox](cloud-run-sandbox.md), [cloudflare](cloudflare.md), [cloudflare-dynamic-workers](cloudflare-dynamic-workers.md), [cloudflare-sandbox](cloudflare-sandbox.md), [codesandbox](codesandbox.md), [crownest](crownest.md), [cubesandbox](cubesandbox.md), [e2b](e2b.md), [freestyle](freestyle.md), [islo](islo.md), [modal](modal.md), [nomad](nomad.md), [opencomputer](opencomputer.md), [opensandbox](opensandbox.md), [orgo](orgo.md), [smolvm](smolvm.md), [superserve](superserve.md), [tensorlake](tensorlake.md), [upstash-box](upstash-box.md), [vercel-sandbox](vercel-sandbox.md) |
 | `direct-cloud` | 22 | [ascii-box](ascii-box.md), [boxd](boxd.md), [coder](coder.md), [daytona](daytona.md), [digitalocean](digitalocean.md), [exe-dev](exe-dev.md), [github-codespaces](github-codespaces.md), [hostinger](hostinger.md), [linode](linode.md), [machine0](machine0.md), [morph](morph.md), [namespace-devbox](namespace-devbox.md), [namespace-instance](namespace-instance.md), [nebius](nebius.md), [ovh](ovh.md), [phala](phala.md), [scaleway](scaleway.md), [sealos-devbox](sealos-devbox.md), [sprites](sprites.md), [tencentcloud](tencentcloud.md), [tenki](tenki.md), [vultr](vultr.md) |
 | `external-provider` | 1 | [external](external.md) |
 | `gpu-cloud` | 5 | [lambda](lambda.md), [nvidia-brev](nvidia-brev.md), [runpod](runpod.md), [vast](vast.md), [wandb](wandb.md) |
