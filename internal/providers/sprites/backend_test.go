@@ -798,6 +798,9 @@ type fakeSpritesAPI struct {
 	createdLabels   []string
 	deleted         string
 	deleteErr       error
+	policyName      string
+	policyDomains   [][]string
+	policyErr       error
 }
 
 func (f *fakeSpritesAPI) GetOrganization(context.Context) (string, error) {
@@ -902,7 +905,7 @@ func TestSpritesBindingFlagsAndPrevalidation(t *testing.T) {
 			values := RegisterSpritesProviderFlags(fs, cfg)
 			count := 0
 			fs.VisitAll(func(*flag.Flag) { count++ })
-			if count != 2 || fs.Lookup("sprites-token") != nil {
+			if count != 3 || fs.Lookup("sprites-token") != nil {
 				t.Fatal("flag surface changed")
 			}
 			if err := ApplySpritesProviderFlags(&cfg, fs, values); err != nil || !reflect.DeepEqual(cfg, before) {
@@ -960,4 +963,10 @@ func TestSpritesBindingFlagsAndPrevalidation(t *testing.T) {
 			}
 		}
 	}
+}
+
+func (f *fakeSpritesAPI) SetNetworkPolicy(_ context.Context, name string, domains []string) error {
+	f.policyName = name
+	f.policyDomains = append(f.policyDomains, domains)
+	return f.policyErr
 }

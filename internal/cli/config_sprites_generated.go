@@ -7,8 +7,9 @@ import (
 )
 
 type fileSpritesConfig struct {
-	APIURL   string `yaml:"apiUrl,omitempty"`
-	WorkRoot string `yaml:"workRoot,omitempty"`
+	APIURL       string   `yaml:"apiUrl,omitempty"`
+	WorkRoot     string   `yaml:"workRoot,omitempty"`
+	NetworkAllow []string `yaml:"networkAllow,omitempty"`
 }
 
 const SpritesConfigDefaultAPIURL string = "https://api.sprites.dev"
@@ -36,14 +37,15 @@ func (cfg *SpritesConfig) applyFile(file *fileSpritesConfig) (SpritesConfigAppli
 
 func (cfg *SpritesConfig) applyEnv() (SpritesConfigApplied, error) {
 	var applied SpritesConfigApplied
-	err := applyConfigEnvironment(cfg, &applied, 0, 3)
+	err := applyConfigEnvironment(cfg, &applied, 0, 4)
 	return applied, err
 }
 
 // SpritesConfigFlagValues holds parsed values; only visited flags are applied.
 type SpritesConfigFlagValues struct {
-	APIURL   *string
-	WorkRoot *string
+	APIURL       *string
+	WorkRoot     *string
+	NetworkAllow *string
 }
 
 // RegisterSpritesConfigFlags registers mechanical bindings without selecting a provider.

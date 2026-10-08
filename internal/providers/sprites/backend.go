@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"path"
 	"strings"
 	"time"
@@ -70,6 +71,49 @@ func validateSpritesOptions(cfg core.Config) error {
 	if err := cleanSpritesWorkRoot(cfg.Sprites.WorkRoot); err != nil {
 		return err
 	}
+	if _, err := normalizeSpritesNetworkAllow(cfg.Sprites.NetworkAllow); err != nil {
+		return err
+	}
+	return nil
+}
+
+// normalizeSpritesNetworkAllow validates and dedupes allow-list domains. Sprites
+// matches exact names or "*." wildcards (apex and wildcard are separate entries)
+// and refuses raw IPs, so those are rejected here before any API call.
+func normalizeSpritesNetworkAllow(domains []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range domains {
+		domain := strings.ToLower(strings.TrimSpace(raw))
+		if domain == "" {
+			continue
+		}
+		host := strings.TrimPrefix(domain, "*.")
+		if host == "" || strings.ContainsAny(host, "*/:@ \t?#") || net.ParseIP(host) != nil || !strings.Contains(host, ".") {
+			return nil, core.Exit(2, "provider=sprites network allow entry %q must be a domain name or *.domain wildcard (no scheme, path, port, or IP)", raw)
+		}
+		if !seen[domain] {
+			seen[domain] = true
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
+
+// applyNetworkPolicy pushes the configured allow-list to the sprite. It is a
+// no-op when no allow-list is configured. Re-applying replaces the prior list.
+func (b *spritesBackend) applyNetworkPolicy(ctx context.Context, name string) error {
+	domains, err := normalizeSpritesNetworkAllow(b.cfg.Sprites.NetworkAllow)
+	if err != nil {
+		return err
+	}
+	if len(domains) == 0 {
+		return nil
+	}
+	if err := b.client.SetNetworkPolicy(ctx, name, domains); err != nil {
+		return spritesError("set network policy", err)
+	}
+	fmt.Fprintf(b.rt.Stderr, "applied sprites network policy sprite=%s allow=%d\n", name, len(domains))
 	return nil
 }
 
@@ -137,6 +181,11 @@ func (b *spritesBackend) Acquire(ctx context.Context, req core.AcquireRequest) (
 	claimed = true
 	lease, err := b.prepareLease(ctx, sprite, leaseID, slug, server.Labels, keyPath, publicKey)
 	if err != nil {
+		cleanupFailedAcquire()
+		return core.LeaseTarget{}, err
+	}
+	// Apply after bootstrap: package installs need egress the policy may block.
+	if err := b.applyNetworkPolicy(ctx, sprite.Name); err != nil {
 		cleanupFailedAcquire()
 		return core.LeaseTarget{}, err
 	}
@@ -225,6 +274,9 @@ func (b *spritesBackend) Resolve(ctx context.Context, req core.ResolveRequest) (
 	}
 	lease, err := b.prepareLease(ctx, sprite, leaseID, slug, policy, keyPath, publicKey)
 	if err != nil {
+		return core.LeaseTarget{}, err
+	}
+	if err := b.applyNetworkPolicy(ctx, sprite.Name); err != nil {
 		return core.LeaseTarget{}, err
 	}
 	if req.Repo.Root != "" {

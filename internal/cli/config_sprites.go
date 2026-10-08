@@ -5,9 +5,10 @@ package cli
 // SpritesConfig owns mechanical bindings; provider prevalidation and source
 // provenance remain in their existing wrappers.
 type SpritesConfig struct {
-	Token    string `env:"CRABBOX_SPRITES_TOKEN" envAlias:"SPRITES_TOKEN" envAlias2:"SPRITE_TOKEN" envAlias3:"SETUP_SPRITE_TOKEN" sources:"env" reportApplied:"true"`
-	APIURL   string `config:"apiUrl" env:"CRABBOX_SPRITES_API_URL" envAlias:"SPRITES_API_URL" flag:"sprites-api-url" sources:"user,repo,env,flag" help:"Sprites API URL" default:"https://api.sprites.dev" fileIgnoreEmpty:"true" fileStorage:"value" reportApplied:"true"`
-	WorkRoot string `config:"workRoot" env:"CRABBOX_SPRITES_WORK_ROOT" flag:"sprites-work-root" sources:"user,repo,env,flag" help:"Sprites remote work root" default:"/home/sprite/crabbox" fileIgnoreEmpty:"true" fileStorage:"value"`
+	Token        string   `env:"CRABBOX_SPRITES_TOKEN" envAlias:"SPRITES_TOKEN" envAlias2:"SPRITE_TOKEN" envAlias3:"SETUP_SPRITE_TOKEN" sources:"env" reportApplied:"true"`
+	APIURL       string   `config:"apiUrl" env:"CRABBOX_SPRITES_API_URL" envAlias:"SPRITES_API_URL" flag:"sprites-api-url" sources:"user,repo,env,flag" help:"Sprites API URL" default:"https://api.sprites.dev" fileIgnoreEmpty:"true" fileStorage:"value" reportApplied:"true"`
+	WorkRoot     string   `config:"workRoot" env:"CRABBOX_SPRITES_WORK_ROOT" flag:"sprites-work-root" sources:"user,repo,env,flag" help:"Sprites remote work root" default:"/home/sprite/crabbox" fileIgnoreEmpty:"true" fileStorage:"value"`
+	NetworkAllow []string `config:"networkAllow" env:"CRABBOX_SPRITES_NETWORK_ALLOW" flag:"sprites-network-allow" sources:"user,repo,env,flag" help:"comma-separated Sprites egress allow-list domains (exact or *.wildcard); applied after warmup and on reuse" fileList:"nonempty-normalized" fileStorage:"value" envList:"trimmed-nonempty" flagList:"csv"`
 }
 
 func applySpritesFileConfig(cfg *Config, file *fileSpritesConfig, source configInputSource, credentialSource credentialValueSource) error {
