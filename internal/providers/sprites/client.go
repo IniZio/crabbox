@@ -22,6 +22,7 @@ type spritesAPI interface {
 	GetSprite(context.Context, string) (spritesInfo, error)
 	ListSprites(context.Context, string) ([]spritesInfo, error)
 	DeleteSprite(context.Context, string) error
+	SetNetworkPolicy(context.Context, string, []string) error
 }
 
 func (c *spritesClient) GetOrganization(ctx context.Context) (string, error) {
@@ -237,6 +238,22 @@ func (c *spritesClient) ListSprites(ctx context.Context, prefix string) ([]sprit
 
 func (c *spritesClient) DeleteSprite(ctx context.Context, name string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/sprites/"+url.PathEscape(name), nil, nil, nil)
+}
+
+// SetNetworkPolicy replaces the sprite's egress policy with an allow-only rule
+// list. The Sprites API enforces it at DNS level and reloads it live.
+func (c *spritesClient) SetNetworkPolicy(ctx context.Context, name string, domains []string) error {
+	rules := make([]spritesNetworkRule, 0, len(domains))
+	for _, domain := range domains {
+		rules = append(rules, spritesNetworkRule{Action: "allow", Domain: domain})
+	}
+	body := map[string]any{"rules": rules}
+	return c.doJSON(ctx, http.MethodPost, "/v1/sprites/"+url.PathEscape(name)+"/policy/network", nil, body, nil)
+}
+
+type spritesNetworkRule struct {
+	Action string `json:"action"`
+	Domain string `json:"domain"`
 }
 
 func (c *spritesClient) doJSON(ctx context.Context, method, requestPath string, query url.Values, body any, out any) error {

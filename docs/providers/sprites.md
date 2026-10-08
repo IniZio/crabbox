@@ -74,14 +74,19 @@ target: linux
 sprites:
   apiUrl: https://api.sprites.dev
   workRoot: /home/sprite/crabbox
+  networkAllow:
+    - github.com
+    - "*.githubusercontent.com"
 ```
 
-Defaults: API URL `https://api.sprites.dev`, work root `/home/sprite/crabbox`.
+Defaults: API URL `https://api.sprites.dev`, work root `/home/sprite/crabbox`,
+no network policy.
 
 Flags:
 
 - `--sprites-api-url` — Sprites API URL.
 - `--sprites-work-root` — remote work root.
+- `--sprites-network-allow` — comma-separated egress allow-list domains.
 
 Environment variables:
 
@@ -93,6 +98,7 @@ SETUP_SPRITE_TOKEN
 CRABBOX_SPRITES_API_URL
 SPRITES_API_URL
 CRABBOX_SPRITES_WORK_ROOT
+CRABBOX_SPRITES_NETWORK_ALLOW
 ```
 
 `CRABBOX_SPRITES_API_URL` wins over `SPRITES_API_URL`. Custom API URLs must use
@@ -102,6 +108,40 @@ different scheme, host, or port. The work root must be a
 dedicated absolute path; broad roots such as `/`, `/home`, `/home/sprite`,
 `/tmp`, `/etc`, `/usr`, `/var`, and similar system directories are rejected
 before sync.
+
+## Network policy
+
+`sprites.networkAllow` (`--sprites-network-allow`, `CRABBOX_SPRITES_NETWORK_ALLOW`)
+restricts a sprite's outbound traffic to a domain allow-list through the Sprites
+network-policy API (`POST /v1/sprites/{name}/policy/network`). With no list
+configured Crabbox never touches the policy.
+
+```sh
+crabbox warmup --provider sprites --sprites-network-allow 'github.com,registry.npmjs.org,*.githubusercontent.com'
+# widen or narrow the same lease later; the sprite is not recreated
+crabbox run --provider sprites --id swift-crab --sprites-network-allow 'github.com,example.com' -- true
+```
+
+Behavior:
+
+- The policy is applied after SSH bootstrap on `warmup`/`run` (bootstrap may
+  need package-mirror egress), and again on every reuse (`--id`) command that
+  has a list configured. Each apply replaces the whole rule set, takes effect
+  live, and is a single allow-only rule list; everything else is denied.
+- Sprites enforces it at DNS level: blocked names do not resolve and raw IPs
+  are refused. Entries are exact names or `*.` wildcards; the apex and the
+  wildcard are separate entries (`github.com` does not cover `www.github.com`,
+  and `*.githubusercontent.com` does not cover `githubusercontent.com`).
+- Crabbox rejects IP literals, URLs, paths, ports, and bare `*` before any API
+  call. Entries are lower-cased and de-duplicated.
+- The policy is read-only from inside the sprite.
+- Crabbox sync, SSH, and release go through the Sprites API proxy, not sprite
+  egress, so they need no allow-list entries.
+- If applying the policy fails during `warmup`/`run`, the new sprite is
+  released like any other failed acquisition. Status and read-only commands do
+  not change the policy.
+- The token comes from the environment as above; a missing token fails before
+  any API call, and error output redacts it.
 
 ## Commands
 

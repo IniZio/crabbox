@@ -18899,7 +18899,7 @@ func TestProxmoxBindingEnvironmentValues(t *testing.T) {
 func TestSpritesUnikraftBindingFileValues(t *testing.T) {
 	clearConfigEnv(t)
 	defaults := baseConfig()
-	if defaults.Sprites != (SpritesConfig{APIURL: "https://api.sprites.dev", WorkRoot: "/home/sprite/crabbox"}) || defaults.UnikraftCloud != (UnikraftCloudConfig{Metro: "fra"}) {
+	if !reflect.DeepEqual(defaults.Sprites, SpritesConfig{APIURL: "https://api.sprites.dev", WorkRoot: "/home/sprite/crabbox"}) || defaults.UnikraftCloud != (UnikraftCloudConfig{Metro: "fra"}) {
 		t.Fatal("binding defaults changed")
 	}
 	for _, trusted := range []bool{false, true} {
@@ -18929,7 +18929,7 @@ func TestSpritesUnikraftBindingFileValues(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if cfg.Sprites != wantSprites || cfg.UnikraftCloud != wantUnikraft || !bytes.Equal(before, after) {
+				if !reflect.DeepEqual(cfg.Sprites, wantSprites) || cfg.UnikraftCloud != wantUnikraft || !bytes.Equal(before, after) {
 					t.Fatalf("trusted=%v raw=%q memory=%d: values or DTO changed", trusted, raw, memory)
 				}
 				inputSource, source := configInputRepo, credentialSourceRepository
@@ -18958,7 +18958,7 @@ func TestSpritesUnikraftBindingFileValues(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("token: fixture-file\n"), &input); err != nil {
 		t.Fatal(err)
 	}
-	if input != (fileSpritesConfig{}) || reflect.TypeFor[fileSpritesConfig]().NumField() != 2 {
+	if !reflect.DeepEqual(input, fileSpritesConfig{}) || reflect.TypeFor[fileSpritesConfig]().NumField() != 3 {
 		t.Fatal("Sprites token gained YAML input")
 	}
 	for _, raw := range []string{"{}", "{memoryMB: null}", "{memoryMB: invalid}"} {
