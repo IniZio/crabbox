@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -103,10 +104,28 @@ func prepareLocalGitSeed(ctx context.Context, repo Repo, cfg Config, force bool,
 		ObjectFormat: seed.Artifact.ObjectFormat, Digest: seed.Artifact.Digest,
 		Refs: seed.Artifact.Refs, PackedBytes: seed.Artifact.PackedBytes,
 	}
+	seed.Plan.Exclude = localGitSeedHostExclude(ctx, repo.Root)
 	if cfg.Sync.Fingerprint {
 		seed.Plan.Fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("local-git-seed-v1\n"+seed.Snapshot.Fingerprint+"\n"+seed.Artifact.Digest)))
 	}
 	return seed, nil
+}
+
+// localGitSeedHostExclude reads the host's info/exclude from the git common
+// dir (shared by worktrees); a missing file yields no extra lines.
+func localGitSeedHostExclude(ctx context.Context, root string) string {
+	path, err := localGitSeedSourceOutput(ctx, root, "rev-parse", "--git-path", "info/exclude")
+	if err != nil || path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(data), "\n")
 }
 
 func checkLocalGitSeedPreflight(manifest SyncManifest, objectBytes int64, cfg Config, force bool, stderr io.Writer) error {
