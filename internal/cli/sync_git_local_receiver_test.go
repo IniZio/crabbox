@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -634,5 +635,36 @@ func TestGitLocalReceiverWindowsRefDigestCanonicalization(t *testing.T) {
 	out, err := exec.Command(shell, "-NoLogo", "-NoProfile", "-File", checker).CombinedOutput()
 	if err != nil || string(out) != plan.refsDigest() {
 		t.Fatalf("PowerShell ref digest differs from canonical UTF-8: %q %v", out, err)
+	}
+}
+
+func TestGitLocalReceiverExcludeCleanStatus(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	plan.Exclude = "# host\nhostonly/"
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil)
+	mustWriteTestFile(t, filepath.Join(workdir, ".crabbox", "x"), "x\n")
+	mustWriteTestFile(t, filepath.Join(workdir, "hostonly", "y"), "y\n")
+	if out := gitOutput(workdir, "status", "--porcelain", "--untracked-files=all"); strings.Contains(out, ".crabbox") || strings.Contains(out, "hostonly") {
+		t.Fatalf("excluded paths dirty: %q", out)
+	}
+}
+
+func TestLocalGitSeedHostExcludeWorktree(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-q")
+	runGit(t, root, "config", "user.name", "A")
+	runGit(t, root, "config", "user.email", "a@example.com")
+	mustWriteTestFile(t, filepath.Join(root, "f"), "f\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-qm", "c")
+	mustWriteTestFile(t, filepath.Join(root, ".git", "info", "exclude"), "hostonly/\n")
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGit(t, root, "worktree", "add", "-q", wt)
+	for _, dir := range []string{root, wt} {
+		if got := localGitSeedHostExclude(context.Background(), dir); !strings.Contains(got, "hostonly/") {
+			t.Fatalf("%s exclude: %q", dir, got)
+		}
 	}
 }
