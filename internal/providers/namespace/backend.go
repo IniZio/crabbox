@@ -332,6 +332,11 @@ func (b *namespaceLeaseBackend) prepareLease(ctx context.Context, name, leaseID,
 	target.ReadyCheck = "command -v git >/dev/null && command -v rsync >/dev/null && command -v tar >/dev/null"
 	server := namespaceServer(name, leaseID, slug, cfg, keep)
 	server.PublicNet.IPv4.IP = target.Host
+	// A stopped devbox gets a new host key on resume; drop the stale entry so
+	// accept-new records the current one. No-op for a freshly created devbox.
+	if err := forgetNamespaceHostKey(target); err != nil {
+		fmt.Fprintf(b.rt.Stderr, "warning: clear stale known_hosts entry for %s: %v\n", target.Host, err)
+	}
 	if err := core.WaitForSSHReady(ctx, &target, b.rt.Stderr, "namespace devbox ssh", core.BootstrapWaitTimeout(cfg)); err != nil {
 		return core.LeaseTarget{}, err
 	}
