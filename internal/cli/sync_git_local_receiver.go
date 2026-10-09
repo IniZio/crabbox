@@ -16,6 +16,8 @@ type gitLocalSeedPlan struct {
 	Refs                             []localGitSeedRef
 	PackedBytes                      int64
 	Fingerprint                      string
+	// Exclude is the host's info/exclude content; the Box gets it plus .crabbox/.
+	Exclude string
 }
 
 func (p gitLocalSeedPlan) valid() bool {
@@ -98,6 +100,7 @@ expected_refs_digest=` + shellQuote(plan.refsDigest()) + `
 expected_metadata_refs_digest=` + shellQuote(plan.metadataRefsDigest()) + `
 transport_head_ref=` + shellQuote(localGitSeedHeadRef) + `
 expected_fingerprint=` + shellQuote(plan.Fingerprint) + `
+exclude_lines=` + shellQuote(plan.Exclude) + `
 stage=
 backup=
 finalizing=
@@ -200,6 +203,8 @@ fresh="$stage/git"
 plain_git init --quiet --template= --object-format="$expected_format" "$stage/repo" >/dev/null 2>&1 || fail
 mv -- "$stage/repo/.git" "$fresh" || fail
 plain_git --git-dir="$fresh" config core.logAllRefUpdates false >/dev/null 2>&1 || fail
+mkdir -p -- "$fresh/info" || fail
+printf '%%s\n.crabbox/\n' "$exclude_lines" > "$fresh/info/exclude" || fail
 phase=verify-bundle
 bundle_refs="$(plain_git --git-dir="$fresh" bundle list-heads "$bundle" 2>/dev/null)" || fail
 bundle_refs="$(printf '%%s\n' "$bundle_refs" | sort)" || fail
