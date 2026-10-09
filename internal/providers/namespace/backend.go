@@ -55,26 +55,25 @@ func (b *namespaceLeaseBackend) Acquire(ctx context.Context, req core.AcquireReq
 		VolumeSizeGB:        cfg.Namespace.VolumeSizeGB,
 		AutoStopIdleTimeout: fmt.Sprintf("%dm", core.DurationMinutesCeil(namespaceAutoStopIdleTimeout(cfg))),
 	}); err != nil {
+		// name is freshly generated, so this cannot touch a pre-existing devbox;
+		// a create that failed after partially succeeding would otherwise leak it.
+		_ = b.deleteDevbox(context.Background(), name)
 		return core.LeaseTarget{}, err
 	}
+	// Devbox exists now. Namespace allows one per user, so any later failure
+	// must delete it regardless of Keep, or the leak blocks the next acquire.
 	lease, err := b.prepareLease(ctx, name, leaseID, slug, req.Keep)
 	if err != nil {
-		if !req.Keep {
-			_ = b.deleteDevbox(context.Background(), name)
-		}
+		_ = b.deleteDevbox(context.Background(), name)
 		return core.LeaseTarget{}, err
 	}
 	if err := core.ClaimLeaseForRepoProvider(leaseID, slug, namespaceProvider, req.Repo.Root, cfg.IdleTimeout, req.Reclaim); err != nil {
-		if !req.Keep {
-			_ = b.deleteDevbox(context.Background(), name)
-		}
+		_ = b.deleteDevbox(context.Background(), name)
 		return core.LeaseTarget{}, err
 	}
 	if err := core.UpdateLeaseClaimEndpoint(leaseID, lease.Server, lease.SSH); err != nil {
-		if !req.Keep {
-			core.RemoveLeaseClaim(leaseID)
-			_ = b.deleteDevbox(context.Background(), name)
-		}
+		core.RemoveLeaseClaim(leaseID)
+		_ = b.deleteDevbox(context.Background(), name)
 		return core.LeaseTarget{}, err
 	}
 	fmt.Fprintf(b.rt.Stderr, "provisioned lease=%s name=%s state=ready\n", leaseID, name)
