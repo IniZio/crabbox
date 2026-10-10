@@ -2452,7 +2452,12 @@ retrySync:
 		}
 		if localGitSeed {
 			stepStart = time.Now()
-			if err := transferLocalGitSeed(ctx, target, workdir, localSeed, cfg.Sync.Timeout, a.Stderr); err != nil {
+			// Verified metadata for the same artifact makes the bundle import redundant; rsync still sends the file delta.
+			reusable := !fullResyncRequested && !isWindowsNativeTarget(target) &&
+				runSSHQuiet(ctx, target, remoteGitLocalSeedReusable(workdir, localSeed.Plan)) == nil
+			if reusable {
+				fmt.Fprintln(a.Stderr, "Git seed reused (verified local Git metadata)")
+			} else if err := transferLocalGitSeed(ctx, target, workdir, localSeed, cfg.Sync.Timeout, a.Stderr); err != nil {
 				return recordFailure(err)
 			}
 			timings.syncSteps.gitSeed += time.Since(stepStart)
