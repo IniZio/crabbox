@@ -668,3 +668,29 @@ func TestLocalGitSeedHostExcludeWorktree(t *testing.T) {
 		}
 	}
 }
+
+func TestGitLocalReceiverReusableAfterWorkloadInvalidation(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	workdir := t.TempDir()
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil); err == nil {
+		t.Fatalf("empty workspace reusable: %q", out)
+	}
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil); err == nil {
+		t.Fatalf("unfinalized metadata reusable: %q", out)
+	}
+	requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil)
+	if err := os.Remove(filepath.Join(workdir, ".git/crabbox/sync-fingerprint")); err != nil {
+		t.Fatal(err)
+	}
+	requireLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil)
+	other := plan
+	other.Digest = strings.Repeat("c", 64)
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedReusable(workdir, other), nil); err == nil {
+		t.Fatalf("different artifact reusable: %q", out)
+	}
+	runGit(t, workdir, "update-ref", "refs/tags/another-release", plan.Head)
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil); err == nil {
+		t.Fatalf("changed refs reusable: %q", out)
+	}
+}
