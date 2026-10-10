@@ -19,7 +19,7 @@ func startWorkspaceOwnerControl(ctx context.Context, target SSHTarget) (SSHTarge
 	noop := func() error { return nil }
 	relay := usesServeRelay(target) && serveRelayControlsFromContext(ctx) != nil
 	if runtime.GOOS == "windows" || target.TargetOS == targetWindows ||
-		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigProxy || target.SSHConfigFile != "" ||
+		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigFile != "" ||
 		(!relay && (target.NoControlMaster || target.ProxyCommand != "")) {
 		return target, noop, nil
 	}
