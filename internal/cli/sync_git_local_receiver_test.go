@@ -683,6 +683,11 @@ func TestGitLocalReceiverReusableAfterWorkloadInvalidation(t *testing.T) {
 	if err := os.Remove(filepath.Join(workdir, ".git/crabbox/sync-fingerprint")); err != nil {
 		t.Fatal(err)
 	}
+	requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil)
+	requireLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil)
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedFingerprint(workdir, plan), nil); err == nil || bytes.Contains(out, []byte(plan.Fingerprint)) {
+		t.Fatalf("reuse before finalize kept a skippable fingerprint: %q %v", out, err)
+	}
 	requireLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil)
 	other := plan
 	other.Digest = strings.Repeat("c", 64)
