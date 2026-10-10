@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -70,5 +71,52 @@ func TestAcquirePrepareFailureNotMaskedByDeleteFailure(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "delete failed") {
 		t.Fatalf("delete failure masked original error: %v", err)
+	}
+}
+
+type specCaptureRunner struct{ spec string }
+
+func (r *specCaptureRunner) Run(_ context.Context, req core.LocalCommandRequest) (core.LocalCommandResult, error) {
+	for i, a := range req.Args {
+		if a == "--from" && i+1 < len(req.Args) {
+			b, err := os.ReadFile(req.Args[i+1])
+			if err != nil {
+				return core.LocalCommandResult{}, err
+			}
+			r.spec = string(b)
+		}
+	}
+	return core.LocalCommandResult{}, nil
+}
+
+func TestCreateDevboxEgressDomains(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want []string
+	}{
+		{"", nil},
+		{" , ", nil},
+		{"a.com, *.b.com ,", []string{"a.com", "*.b.com"}},
+	} {
+		runner := &specCaptureRunner{}
+		backend := &namespaceLeaseBackend{
+			cfg: core.Config{Namespace: core.NamespaceConfig{EgressDomains: tc.raw}},
+			rt:  core.Runtime{Stdout: io.Discard, Stderr: io.Discard, Exec: runner},
+		}
+		spec := namespaceCreateSpec{Name: "n", Image: "i", Size: "m", NetworkPolicy: namespaceNetworkPolicy(backend.cfg)}
+		if err := backend.createDevbox(context.Background(), spec); err != nil {
+			t.Fatal(err)
+		}
+		if tc.want == nil {
+			if strings.Contains(runner.spec, "network_policy") {
+				t.Fatalf("raw=%q unexpected policy: %s", tc.raw, runner.spec)
+			}
+			continue
+		}
+		for _, d := range tc.want {
+			if !strings.Contains(runner.spec, "network_policy:") || !strings.Contains(runner.spec, "- "+d) && !strings.Contains(runner.spec, "- '"+d+"'") && !strings.Contains(runner.spec, "- \""+d+"\"") {
+				t.Fatalf("raw=%q missing %s: %s", tc.raw, d, runner.spec)
+			}
+		}
 	}
 }
