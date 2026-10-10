@@ -17,7 +17,7 @@ import (
 func startWorkspaceOwnerControl(ctx context.Context, target SSHTarget) (SSHTarget, func() error, error) {
 	noop := func() error { return nil }
 	if runtime.GOOS == "windows" || target.TargetOS == targetWindows || target.NoControlMaster ||
-		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigProxy || target.SSHConfigFile != "" || target.ProxyCommand != "" {
+		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigFile != "" || target.ProxyCommand != "" {
 		return target, noop, nil
 	}
 	if err := resolveSSHPortNoInput(ctx, &target, workspaceOwnerSSHConnectTimeoutOption, workspaceOwnerSSHConnectionAttemptsOption, io.Discard); err != nil {

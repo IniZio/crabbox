@@ -108,7 +108,7 @@ func TestWorkspaceOwnerControlReusesConnectionAndJoinsClose(t *testing.T) {
 func TestWorkspaceOwnerControlPreservesUnsupportedRoutes(t *testing.T) {
 	for _, target := range []SSHTarget{
 		{TargetOS: targetWindows}, {NoControlMaster: true}, {AuthSecret: true},
-		{AuthoritativeKnownHosts: true}, {SSHConfigProxy: true}, {SSHConfigFile: "/provider/config"}, {ProxyCommand: "provider proxy"},
+		{AuthoritativeKnownHosts: true}, {SSHConfigFile: "/provider/config"}, {ProxyCommand: "provider proxy"},
 	} {
 		got, closeControl, err := startWorkspaceOwnerControl(t.Context(), target)
 		if err != nil || got.ownerControlPath != "" {
@@ -243,5 +243,35 @@ func TestWorkspaceOwnerQuiesceClosesControlBeforeDestructiveRelease(t *testing.T
 	}
 	if !closed {
 		t.Fatal("destructive release can discard the owner with its control connection still open")
+	}
+}
+
+func TestWorkspaceOwnerControlReusesConnectionForSSHConfigProxy(t *testing.T) {
+	server := newForwardSSHServer(t, "fixture")
+	close(server.release)
+	server.enableReadinessSessions(t, t.TempDir(), true)
+	target := SSHTarget{Host: "127.0.0.1", Port: strconv.Itoa(server.port()), User: "fixture", TargetOS: targetLinux,
+		FallbackPorts: []string{}, DisableHostKeyChecking: true, SSHConfigProxy: true}
+	control, closeControl, err := startWorkspaceOwnerControl(t.Context(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeControl() })
+	if control.ownerControlPath == "" {
+		t.Fatalf("SSHConfigProxy target did not get an owner control master: %+v", control)
+	}
+	for range 3 {
+		if err := runSSHQuiet(t.Context(), control, "exit 0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.mu.Lock()
+	handshakes := len(server.users)
+	server.mu.Unlock()
+	if handshakes != 1 {
+		t.Fatalf("three control calls used %d authentications, want one", handshakes)
+	}
+	if err := closeControl(); err != nil {
+		t.Fatal(err)
 	}
 }
