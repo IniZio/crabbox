@@ -80,6 +80,12 @@ func remoteGitLocalSeedFinalize(workdir string, plan gitLocalSeedPlan) string {
 	return remoteGitLocalSeedCommand(workdir, plan, "finalize")
 }
 
+// remoteGitLocalSeedReusable succeeds only when the workspace holds fully
+// verified metadata for this exact artifact, so the bundle import can be skipped.
+func remoteGitLocalSeedReusable(workdir string, plan gitLocalSeedPlan) string {
+	return remoteGitLocalSeedCommand(workdir, plan, "reusable")
+}
+
 func remoteGitLocalSeedFingerprint(workdir string, plan gitLocalSeedPlan) string {
 	return remoteGitLocalSeedCommand(workdir, plan, "fingerprint")
 }
@@ -276,6 +282,9 @@ printf '%s' "$expected_digest" > "$metadata/crabbox-local-complete.new" || fail
 mv -- "$metadata/crabbox-local-complete.new" "$metadata/crabbox-local-complete" || fail
 printf '%s' "$expected_fingerprint" > "$metadata/crabbox/sync-fingerprint.new" || fail
 mv -- "$metadata/crabbox/sync-fingerprint.new" "$metadata/crabbox/sync-fingerprint" || fail
+`
+		} else if action == "reusable" {
+			script += `[ "$(cat "$metadata/crabbox-local-complete" 2>/dev/null)" = "$expected_digest" ] || fail
 `
 		} else {
 			script += `[ "$(cat "$metadata/crabbox-local-complete" 2>/dev/null)" = "$expected_digest" ] || fail
