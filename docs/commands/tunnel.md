@@ -30,11 +30,35 @@ SIGTERM, or parent context cancellation. Teardown uses the same owned
 process-group/job-object path as pond SSH forwards, so the SSH root and any
 ProxyCommand descendants are reaped together.
 
+## Reverse tunnel
+
+`--reverse <boxport>:<hostport>` does the opposite: it exposes a port on this
+machine to the lease. The Box listens on `127.0.0.1:<boxport>` and each
+connection is forwarded to `127.0.0.1:<hostport>` here. Both ends are
+loopback only (`ssh -N -o ExitOnForwardFailure=yes -R
+127.0.0.1:<boxport>:127.0.0.1:<hostport>`); there is no positional port and no
+`--local-port`.
+
+```sh
+crabbox tunnel --id blue-box --reverse 18080:9000 --json
+```
+
+The reverse forward uses its own non-multiplexed SSH session. Readiness is an
+SSH exec probe confirming the Box port accepts a connection; until then
+nothing is printed. After that it prints one line and blocks until Ctrl-C,
+SIGTERM, or context cancellation, which reaps the SSH process group. With
+`--json` the line is `{"box":18080,"host":9000}`; otherwise
+`box 127.0.0.1:18080 -> host 127.0.0.1:9000`. Both ports must be in 1..65535
+(usage error, exit 2). If the Box port is not ready within 15 seconds the
+command exits 5 with a redacted diagnostic.
+
 ## Flags
 
 ```text
 --id <lease-id-or-slug>   required lease identifier
 --local-port <port>       local loopback port; omit or use 0 for automatic
+--reverse <box>:<host>    expose host loopback port <host> on the Box's <box>
+--json                    with --reverse, print {"box":N,"host":N} when ready
 --provider <name>         provider selection
 --network <mode>          auto, public, or tailscale target resolution
 --reclaim                 claim the lease for the current repository

@@ -4,6 +4,7 @@
 
 ### Changes
 
+- Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
 - AWS Windows images: enable guarded Server 2025 bakes from stock with source-only OS selection, guest-version proof, and matching Server Core containers; explicit Server 2022 leases retain stock selection. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
 
 ### Fixes
