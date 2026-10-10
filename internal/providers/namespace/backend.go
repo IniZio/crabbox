@@ -54,6 +54,7 @@ func (b *namespaceLeaseBackend) Acquire(ctx context.Context, req core.AcquireReq
 		Site:                strings.TrimSpace(cfg.Namespace.Site),
 		VolumeSizeGB:        cfg.Namespace.VolumeSizeGB,
 		AutoStopIdleTimeout: fmt.Sprintf("%dm", core.DurationMinutesCeil(namespaceAutoStopIdleTimeout(cfg))),
+		NetworkPolicy:       namespaceNetworkPolicy(cfg),
 	}); err != nil {
 		// name is freshly generated, so this cannot touch a pre-existing devbox;
 		// a create that failed after partially succeeding would otherwise leak it.
@@ -451,13 +452,31 @@ func (b *namespaceLeaseBackend) runCommand(ctx context.Context, args []string, s
 }
 
 type namespaceCreateSpec struct {
-	Name                string `yaml:"name,omitempty"`
-	Image               string `yaml:"image,omitempty"`
-	Size                string `yaml:"size,omitempty"`
-	Checkout            string `yaml:"checkout,omitempty"`
-	Site                string `yaml:"site,omitempty"`
-	VolumeSizeGB        int    `yaml:"volume_size_gb,omitempty"`
-	AutoStopIdleTimeout string `yaml:"auto_stop_idle_timeout,omitempty"`
+	Name                string                      `yaml:"name,omitempty"`
+	Image               string                      `yaml:"image,omitempty"`
+	Size                string                      `yaml:"size,omitempty"`
+	Checkout            string                      `yaml:"checkout,omitempty"`
+	Site                string                      `yaml:"site,omitempty"`
+	VolumeSizeGB        int                         `yaml:"volume_size_gb,omitempty"`
+	AutoStopIdleTimeout string                      `yaml:"auto_stop_idle_timeout,omitempty"`
+	NetworkPolicy       *namespaceNetworkPolicySpec `yaml:"network_policy,omitempty"`
+}
+
+type namespaceNetworkPolicySpec struct {
+	EgressDomains []string `yaml:"egress_domains"`
+}
+
+func namespaceNetworkPolicy(cfg core.Config) *namespaceNetworkPolicySpec {
+	var domains []string
+	for _, d := range strings.Split(cfg.Namespace.EgressDomains, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			domains = append(domains, d)
+		}
+	}
+	if len(domains) == 0 {
+		return nil
+	}
+	return &namespaceNetworkPolicySpec{EgressDomains: domains}
 }
 
 type namespacePrepareResult struct {

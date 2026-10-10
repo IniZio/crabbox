@@ -81,6 +81,10 @@ Defaults baked into Crabbox: `image: builtin:base`,
 `repository`, `site`, and `volumeSizeGB` are unset by default (size is then
 derived from `--class`, see below).
 
+`--namespace-egress-domains a.com,*.b.com` (config `egressDomains`) sets the
+spec `network_policy.egress_domains` allow-list on `devbox create`; unset means
+unrestricted. Namespace documents no way to change it on a running Devbox.
+
 Provider flags:
 
 ```text
@@ -88,6 +92,7 @@ Provider flags:
 --namespace-size
 --namespace-repository
 --namespace-site
+--namespace-egress-domains
 --namespace-volume-size-gb
 --namespace-auto-stop-idle-timeout
 --namespace-work-root
@@ -101,6 +106,7 @@ CRABBOX_NAMESPACE_IMAGE
 CRABBOX_NAMESPACE_SIZE
 CRABBOX_NAMESPACE_REPOSITORY
 CRABBOX_NAMESPACE_SITE
+CRABBOX_NAMESPACE_EGRESS_DOMAINS
 CRABBOX_NAMESPACE_VOLUME_SIZE_GB
 CRABBOX_NAMESPACE_AUTO_STOP_IDLE_TIMEOUT
 CRABBOX_NAMESPACE_WORK_ROOT

@@ -12,6 +12,7 @@ type fileNamespaceConfig struct {
 	Size                string `yaml:"size,omitempty"`
 	Repository          string `yaml:"repository,omitempty"`
 	Site                string `yaml:"site,omitempty"`
+	EgressDomains       string `yaml:"egressDomains,omitempty"`
 	VolumeSizeGB        int    `yaml:"volumeSizeGB,omitempty"`
 	AutoStopIdleTimeout string `yaml:"autoStopIdleTimeout,omitempty"`
 	WorkRoot            string `yaml:"workRoot,omitempty"`
@@ -46,7 +47,7 @@ func (cfg *NamespaceConfig) applyFile(file *fileNamespaceConfig) (NamespaceConfi
 
 func (cfg *NamespaceConfig) applyEnv() (NamespaceConfigApplied, error) {
 	var applied NamespaceConfigApplied
-	err := applyConfigEnvironment(cfg, &applied, 0, 8)
+	err := applyConfigEnvironment(cfg, &applied, 0, 9)
 	return applied, err
 }
 
@@ -56,6 +57,7 @@ type NamespaceConfigFlagValues struct {
 	Size                *string
 	Repository          *string
 	Site                *string
+	EgressDomains       *string
 	VolumeSizeGB        *int
 	AutoStopIdleTimeout *string
 	WorkRoot            *string

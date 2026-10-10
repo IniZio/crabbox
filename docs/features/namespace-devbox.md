@@ -74,6 +74,7 @@ built-in default.
 | `size`                | `--namespace-size`                  | `CRABBOX_NAMESPACE_SIZE`                   | `M`                  | One of `S`, `M`, `L`, `XL` (case-insensitive). |
 | `repository`          | `--namespace-repository`            | `CRABBOX_NAMESPACE_REPOSITORY`             | _(none)_             | Optional repo for Namespace to clone into the Devbox. |
 | `site`                | `--namespace-site`                  | `CRABBOX_NAMESPACE_SITE`                   | _(none)_             | Optional Namespace site. |
+| `egressDomains`       | `--namespace-egress-domains`        | `CRABBOX_NAMESPACE_EGRESS_DOMAINS`         | _(none)_             | Comma-separated outbound allow-list (`network_policy.egress_domains`); unset = unrestricted. |
 | `volumeSizeGB`        | `--namespace-volume-size-gb`        | `CRABBOX_NAMESPACE_VOLUME_SIZE_GB`         | _(none)_             | Persistent volume size in GiB; must be non-negative. |
 | `autoStopIdleTimeout` | `--namespace-auto-stop-idle-timeout`| `CRABBOX_NAMESPACE_AUTO_STOP_IDLE_TIMEOUT` | `30m`                | Namespace idle auto-stop; falls back to Crabbox `--idle-timeout` if unset. |
 | `workRoot`            | `--namespace-work-root`             | `CRABBOX_NAMESPACE_WORK_ROOT`              | `/workspaces/crabbox`| Crabbox sync root; must be a dedicated absolute subdirectory. |
