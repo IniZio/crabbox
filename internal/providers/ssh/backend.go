@@ -292,12 +292,27 @@ func (b *staticLeaseBackend) ReleaseLease(ctx context.Context, req core.ReleaseL
 		if claim.Labels["static_power_token"] != "" {
 			return core.Exit(4, "static lease retains power custody; restore its dedicated-host configuration")
 		}
+		if req.PurgeRemoteWorkspace && req.Lease.SSH.TargetOS != core.TargetWindows {
+			workRoot := firstNonEmpty(claim.StaticWorkRoot, b.Cfg.Static.WorkRoot, b.Cfg.WorkRoot)
+			if err := core.PurgeStaticWorkspace(ctx, req.Lease.SSH, workRoot, req.Lease.LeaseID); err != nil {
+				fmt.Fprintf(b.RT.Stderr, "warning: remote workspace cleanup failed for %s: %v\n", req.Lease.LeaseID, err)
+			}
+		}
 		if err := core.RemoveLeaseClaimIfUnchanged(req.Lease.LeaseID, claim); err != nil {
 			return err
 		}
 	}
 	b.clearAcquiredLease(req.Lease.LeaseID)
 	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (b *staticLeaseBackend) ReleaseLeaseConnectionCleanupSafe() bool { return !b.hasPowerHooks() }

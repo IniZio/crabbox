@@ -5477,6 +5477,7 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 		Force:                           true,
 		ExpectedProviderIdentity:        expectedIdentity,
 		DeferProviderCleanupObservation: !*wait,
+		PurgeRemoteWorkspace:            true,
 	}
 	if !connectionCleanupSafe {
 		request.GuardedRemoteCleanup = a.cleanupBackendLeaseRemoteConnectionsBestEffort

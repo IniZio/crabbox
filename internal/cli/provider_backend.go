@@ -1324,6 +1324,9 @@ type ReleaseLeaseRequest struct {
 	// GuardedRemoteCleanup lets providers that fence release authorization run
 	// generic remote teardown only after ownership is verified under that fence.
 	GuardedRemoteCleanup func(context.Context, LeaseTarget)
+	// PurgeRemoteWorkspace asks static SSH providers to also delete the lease's
+	// remote workdir, owner gate and Actions stop marker. Set by explicit stop only.
+	PurgeRemoteWorkspace bool
 }
 
 // ConfirmedAbsentLocalCleanupRequest carries the immutable provider identity

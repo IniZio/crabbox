@@ -240,6 +240,9 @@ func (f staticCommandFixture) assertCleanup(t *testing.T, released, cleanupFails
 		marker = `C:\ProgramData\crabbox\actions\` + f.cfg.Static.ID + ".stop"
 	}
 	for _, record := range f.commands(t) {
+		if strings.HasPrefix(record.Command, "rm -rf -- ") {
+			continue // explicit-stop workspace purge, covered by TestStaticSSHStopPurgesWorkspace
+		}
 		if strings.Contains(record.Command, marker) {
 			markers++
 			writes := strings.Contains(record.Command, "mkdir -p") && strings.Contains(record.Command, "touch ")

@@ -43,7 +43,13 @@ warm-box workflow (`run`, `ssh`, `status`, tunnels) behaves the same as for
 provisioned providers.
 
 `stop` (also spelled `release`) attempts shared connection cleanup and removes
-the local claim. `run` does the same when its release policy fires: normally
+the local claim. On POSIX targets without power hooks, explicit `stop` also deletes, for that lease
+ID only, the remote workdir `<workRoot>/<id>`, its workspace-owner `.gate` file
+and its `$HOME/.crabbox/actions/<id>.stop` marker. The remote `rm` refuses an
+empty ID, an ID containing `/`, `\` or `..`, and any path not strictly under an
+absolute work root. If remote removal fails, `stop` prints a warning and still
+releases the claim. Native Windows targets and `run` release leave the workspace
+in place. `run` does the same when its release policy fires: normally
 after a fresh one-shot run, but not a kept run or ordinary unpowered ID reuse.
 Without power hooks, remote connection cleanup is best-effort and the host stays
 available. With power hooks, the last reference runs shutdown before custody is
