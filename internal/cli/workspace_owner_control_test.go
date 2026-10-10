@@ -275,3 +275,15 @@ func TestWorkspaceOwnerControlReusesConnectionForSSHConfigProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWorkspaceOwnerControlFallsBackWhenProxyRouteUnresolvable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	target := SSHTarget{Host: "secret-host.invalid", Port: "22", User: "fixture", TargetOS: targetLinux, SSHConfigProxy: true}
+	got, closeControl, err := startWorkspaceOwnerControl(t.Context(), target)
+	if err != nil || got.ownerControlPath != "" || !got.NoControlMaster {
+		t.Fatalf("proxy setup failure must fall back: target=%+v err=%v", got, err)
+	}
+	if err := closeControl(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -32,7 +32,13 @@ func startWorkspaceOwnerControl(ctx context.Context, target SSHTarget) (SSHTarge
 		// Renewals and release must remain independent of workload sessions.
 		target.ownerControlPath = ""
 	}
-	return startSSHControlMaster(ctx, target, workspaceOwnerSSHConnectTimeoutOption, workspaceOwnerSSHConnectionAttemptsOption)
+	started, closeMaster, err := startSSHControlMaster(ctx, target, workspaceOwnerSSHConnectTimeoutOption, workspaceOwnerSSHConnectionAttemptsOption)
+	// Config-backed routes may not resolve or support a master; run them unmultiplexed.
+	if err != nil && !relay && target.SSHConfigProxy && ctx.Err() == nil {
+		target.NoControlMaster = true
+		return target, noop, nil
+	}
+	return started, closeMaster, err
 }
 
 func startSSHControlMaster(ctx context.Context, target SSHTarget, connectTimeout, attempts string) (SSHTarget, func() error, error) {
