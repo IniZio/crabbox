@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+- Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
+
 ## 0.79.1 - 2026-10-20
 
 ### Highlights

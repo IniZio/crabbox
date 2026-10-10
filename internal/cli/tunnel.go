@@ -25,22 +25,33 @@ func (a App) tunnel(ctx context.Context, args []string) error {
 	id := fs.String("id", "", "lease id or slug")
 	reclaim := fs.Bool("reclaim", false, "claim this lease for the current repo")
 	localPort := fs.String("local-port", "", "local loopback port; omit or use 0 to choose an available port")
+	reverse := fs.String("reverse", "", "expose host loopback port on the box: <boxport>:<hostport>")
+	jsonOut := fs.Bool("json", false, "print reverse tunnel readiness as JSON {box,host}")
 	providerFlags := registerProviderFlags(fs, defaults)
 	targetFlags := registerTargetFlags(fs, defaults)
 	networkFlags := registerNetworkModeFlag(fs, defaults)
 	if err := parseInterspersedFlags(fs, args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*id) == "" || fs.NArg() != 1 {
-		return Exit(2, "usage: crabbox tunnel --id <lease-id-or-slug> [--local-port <port>] <remote-port>")
-	}
-	remotePort, err := parseTunnelPort(fs.Arg(0), "remote port", false)
-	if err != nil {
-		return err
-	}
-	requestedLocalPort, err := parseTunnelPort(*localPort, "local port", true)
-	if err != nil {
-		return err
+	var remotePort, requestedLocalPort, boxPort, hostPort string
+	var err error
+	if *reverse != "" {
+		if strings.TrimSpace(*id) == "" || fs.NArg() != 0 || *localPort != "" {
+			return Exit(2, "usage: crabbox tunnel --id <lease-id-or-slug> --reverse <boxport>:<hostport> [--json]")
+		}
+		if boxPort, hostPort, err = parseTunnelReverse(*reverse); err != nil {
+			return err
+		}
+	} else {
+		if strings.TrimSpace(*id) == "" || fs.NArg() != 1 || *jsonOut {
+			return Exit(2, "usage: crabbox tunnel --id <lease-id-or-slug> [--local-port <port>] <remote-port>")
+		}
+		if remotePort, err = parseTunnelPort(fs.Arg(0), "remote port", false); err != nil {
+			return err
+		}
+		if requestedLocalPort, err = parseTunnelPort(*localPort, "local port", true); err != nil {
+			return err
+		}
 	}
 	cfg, err := loadSSHCommandConfig(fs, *provider, providerFlags, targetFlags, networkFlags, leaseTargetConfigOptions{LeaseID: *id})
 	if err != nil {
@@ -61,6 +72,9 @@ func (a App) tunnel(ctx context.Context, args []string) error {
 	}
 	stopActivity := a.startInteractiveSSHLeaseActivity(ctx, cfg, lease)
 	defer stopActivity()
+	if *reverse != "" {
+		return runSSHReverseForward(ctx, lease.SSH, boxPort, hostPort, *jsonOut, a.Stdout, sshTunnelReadyTimeout)
+	}
 	return runSSHLocalForward(ctx, lease.SSH, requestedLocalPort, remotePort, a.Stdout)
 }
 
