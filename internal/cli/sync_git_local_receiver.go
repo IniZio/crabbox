@@ -284,7 +284,9 @@ printf '%s' "$expected_fingerprint" > "$metadata/crabbox/sync-fingerprint.new" |
 mv -- "$metadata/crabbox/sync-fingerprint.new" "$metadata/crabbox/sync-fingerprint" || fail
 `
 		} else if action == "reusable" {
+			// Like import, drop the old fingerprint so an interrupted file sync cannot be skipped later.
 			script += `[ "$(cat "$metadata/crabbox-local-complete" 2>/dev/null)" = "$expected_digest" ] || fail
+rm -f -- "$metadata/crabbox/sync-fingerprint" || fail
 `
 		} else {
 			script += `[ "$(cat "$metadata/crabbox-local-complete" 2>/dev/null)" = "$expected_digest" ] || fail
