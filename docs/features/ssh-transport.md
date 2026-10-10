@@ -159,8 +159,10 @@ it before falling back to direct owner-control connections with multiplexing
 disabled. Cancellation and cleanup failures still stop acquisition.
 Owner scripts travel as complete, length-checked stdin frames so long scripts
 do not exceed the macOS OpenSSH multiplexing message limit. Windows/WSL2,
-proxy/config-backed routes, provider-owned authoritative known-host files, and
-explicitly disabled multiplexing retain separate connections.
+config-file routes, provider-owned authoritative known-host files, and
+explicitly disabled multiplexing retain separate connections. Provider proxy
+routes get an owner master too; if their route cannot be resolved, they fall
+back to separate connections.
 
 Linux, macOS, and native Windows readiness checks execute the ready command
 without a separate successful-login probe. A failed direct readiness check
