@@ -20,12 +20,20 @@ func startWorkspaceOwnerControl(ctx context.Context, target SSHTarget) (SSHTarge
 		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigFile != "" || target.ProxyCommand != "" {
 		return target, noop, nil
 	}
-	if err := resolveSSHPortNoInput(ctx, &target, workspaceOwnerSSHConnectTimeoutOption, workspaceOwnerSSHConnectionAttemptsOption, io.Discard); err != nil {
+	// Config-backed routes may not resolve or support a master; run them unmultiplexed.
+	setupFailed := func(err error) (SSHTarget, func() error, error) {
+		if target.SSHConfigProxy && ctx.Err() == nil {
+			target.NoControlMaster = true
+			return target, noop, nil
+		}
 		return target, noop, err
+	}
+	if err := resolveSSHPortNoInput(ctx, &target, workspaceOwnerSSHConnectTimeoutOption, workspaceOwnerSSHConnectionAttemptsOption, io.Discard); err != nil {
+		return setupFailed(err)
 	}
 	session, err := newSSHTransportSession(ctx, target, false)
 	if err != nil {
-		return target, noop, err
+		return setupFailed(err)
 	}
 	// Darwin's Unix socket path limit is shorter than its default temp directory.
 	dir, err := os.MkdirTemp("/tmp", "cbx-owner-")
