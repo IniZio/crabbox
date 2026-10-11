@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"net/url"
 	"os"
@@ -719,11 +720,17 @@ const (
 )
 
 func defaultConfig() Config {
-	cfg, err := loadConfig()
+	cfg, err := loadConfigInputs()
 	if err != nil {
 		return baseConfig()
 	}
-	return cfg
+	resolved, err := resolveLoadedConfig(cfg, "", "")
+	if err != nil {
+		// Flags may replace an invalid inherited selector. Keep the other
+		// inherited defaults instead of silently resetting the entire config.
+		return cfg
+	}
+	return resolved
 }
 
 func loadConfig() (Config, error) {
@@ -731,6 +738,29 @@ func loadConfig() (Config, error) {
 }
 
 func loadConfigWithOverrides(coordinator, provider string) (Config, error) {
+	return loadConfigWithFlagOverrides(coordinator, provider, nil)
+}
+
+func loadConfigWithFlagOverrides(coordinator, provider string, fs *flag.FlagSet) (Config, error) {
+	cfg, err := loadConfigInputs()
+	if err != nil {
+		return Config{}, err
+	}
+	if fs != nil {
+		if err := applyConfigSelectorFlags(&cfg, fs); err != nil {
+			return Config{}, err
+		}
+	}
+	return resolveLoadedConfig(cfg, coordinator, provider)
+}
+
+// loadConfigForFlags resolves selectors before provider defaults can validate
+// them. Commands still apply their complete flag sets at their own boundary.
+func loadConfigForFlags(fs *flag.FlagSet) (Config, error) {
+	return loadConfigWithFlagOverrides("", "", fs)
+}
+
+func loadConfigInputs() (Config, error) {
 	cfg := baseConfig()
 	for _, path := range configPaths() {
 		trust := classifyConfigPath(path)
@@ -741,6 +771,10 @@ func loadConfigWithOverrides(coordinator, provider string) (Config, error) {
 	if err := applyEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	return cfg, nil
+}
+
+func resolveLoadedConfig(cfg Config, coordinator, provider string) (Config, error) {
 	// Validate this cross-provider environment destination before provider
 	// dispatch. The selected value may itself be CRABBOX_PROVIDER, so waiting
 	// for External provider validation would let that value route around it.
@@ -853,6 +887,34 @@ func ApplyLinuxConnectionDefaults(cfg *Config, defaultSSHUser, defaultSSHPort st
 }
 
 func applyProviderConfigDefaults(cfg *Config) error {
+	target, mode := cfg.TargetOS, cfg.explicitWindowsMode
+	if err := applyProviderConfigDefaultValues(cfg); err != nil {
+		return err
+	}
+	// Templates and adapters supply defaults, not replacements for explicit
+	// platform flags. Preserve their values before target validation runs.
+	if cfg.targetFlagExplicit {
+		cfg.TargetOS = target
+		if normalizeTargetOS(target) != targetWindows {
+			cfg.WindowsMode = windowsModeNormal
+		}
+	}
+	if cfg.windowsModeFlagExplicit && mode != "" {
+		cfg.WindowsMode = normalizeWindowsMode(mode)
+	}
+	if provider, err := ProviderFor(cfg.Provider); err == nil {
+		if _, ok := provider.(ProviderConfigDefaulter); ok {
+			if phase, ok := provider.(ProviderConfigDefaultsPhase); ok && phase.ConfigDefaultsTargetFinalization() == ProviderConfigDefaultsCallerFinalizes {
+				return nil
+			}
+			normalizeTargetConfig(cfg)
+			return validateTargetConfig(*cfg)
+		}
+	}
+	return nil
+}
+
+func applyProviderConfigDefaultValues(cfg *Config) error {
 	prepareProviderDefaults(cfg)
 	if normalized, err := NormalizeArchitecture(cfg.Architecture); err != nil {
 		return err
@@ -871,11 +933,7 @@ func applyProviderConfigDefaults(cfg *Config) error {
 			if err := defaulter.ApplyConfigDefaults(cfg); err != nil {
 				return err
 			}
-			if phase, ok := provider.(ProviderConfigDefaultsPhase); ok && phase.ConfigDefaultsTargetFinalization() == ProviderConfigDefaultsCallerFinalizes {
-				return nil
-			}
-			normalizeTargetConfig(cfg)
-			return validateTargetConfig(*cfg)
+			return nil
 		}
 	}
 	if cfg.Provider == "tart" || cfg.Provider == "local-tart" || cfg.Provider == "macos-vm" {

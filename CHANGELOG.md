@@ -6,6 +6,11 @@
 
 - Docs: consolidate provider selection, class catalogs, and lifecycle references; correct stale provider support, sizing, and transport guidance.
 
+### Fixes
+
+- CLI: resolve explicit provider, target, Windows mode, architecture, OS, class, and type flags before validating inherited configuration, preserving unrelated defaults and recorded-lease identity checks. [PR 2767](https://github.com/openclaw/crabbox/pull/2767).
+- Jobs: apply a selected job's provider and platform selectors before validating inherited defaults, including dry runs and existing-lease reuse. [PR 2767](https://github.com/openclaw/crabbox/pull/2767).
+
 ## 0.74.0 - 2026-10-10
 
 ### Highlights
