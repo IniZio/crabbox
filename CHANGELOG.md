@@ -13,6 +13,7 @@
 
 ### Fixes
 
+- Coordinator: preserve leading zero bytes in generated Ed25519 SSH host keys so the public identity and injected private key remain a valid pair.
 - Coordinator: prevent the portal from exhausting coordinator memory when many external runner records are stored by bounding reads and pruning old stale records.
 - Serve: stop spurious `serve_rate_limited` heartbeat errors by pacing each heartbeat at least `--poll-interval` after the previous response. [PR 2770](https://github.com/openclaw/crabbox/pull/2770).
 - Serve: prepare bootstrap packages in the background without delaying restart heartbeats or reconciliation; prepared leases start in about a second instead of ~30s, recover automatically after shared-image pruning, and retain unique SSH host keys. [PR 2770](https://github.com/openclaw/crabbox/pull/2770).
