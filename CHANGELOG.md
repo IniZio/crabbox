@@ -18,6 +18,7 @@
 - Coordinator: allow explicitly configured capacity admins to use their owner allowance when shared fleet or org caps are full, while preserving spending limits and ordinary admission.
 
 - Coordinator: preserve deployment-managed capacity-admin membership across deploys without replacing secret-backed members or raising ordinary owner limits.
+- Coordinator: reconcile org-wide external runner inventories across owners, deduplicate visible runners with two bounded streaming scans, hide observations older than two hours, and prune rows last seen more than seven days ago. [PR 2779](https://github.com/openclaw/crabbox/pull/2779).
 - Coordinator: preserve leading zero bytes in generated Ed25519 SSH host keys so the public identity and injected private key remain a valid pair.
 - Bound coordinator storage scans for pools, image catalogs, checkpoints, and dynamic runner indexes to uncached pages.
 - Coordinator: prevent the portal from exhausting coordinator memory when many external runner records are stored by bounding reads and pruning old stale records.

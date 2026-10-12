@@ -37,7 +37,7 @@ import {
   type CoordinatorWebSocketUpgradeOptions,
 } from "../src/coordinator-runtime";
 import { sha256Hex } from "../src/encoding";
-import { imageRouteDeadlineMs } from "../src/fleet";
+import { EXTERNAL_RUNNER_FRESHNESS, imageRouteDeadlineMs } from "../src/fleet";
 import {
   AWSProvider,
   AzureProvider,
@@ -36249,12 +36249,14 @@ describe("fleet lease identity and idle", () => {
         id: "active-runner",
         status: "ready",
         stale: false,
+        lastSeenAt: new Date().toISOString(),
       });
       storage.seed("runner:z-busy", {
         ...runner,
         id: "busy-runner",
         status: "busy",
         stale: undefined,
+        lastSeenAt: new Date().toISOString(),
       });
 
       const home = await fleet.fetch(request("GET", "/portal", { headers }));
@@ -36293,7 +36295,7 @@ describe("fleet lease identity and idle", () => {
           status: index < 270 ? "ready" : "missing",
           stale: index >= 270,
           firstSeenAt: "2026-01-01T00:00:00.000Z",
-          lastSeenAt: "2026-01-01T00:00:00.000Z",
+          lastSeenAt: new Date().toISOString(),
           updatedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
         } satisfies ExternalRunnerRecord);
       }
@@ -36412,7 +36414,7 @@ describe("fleet lease identity and idle", () => {
   );
 
   it.each(["cloudflare", "shared"])(
-    "prunes only old stale external runners in resumable uncached batches on %s",
+    "prunes old external runners regardless of stale flag in resumable uncached batches on %s",
     async (runtime) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       try {
@@ -36433,17 +36435,39 @@ describe("fleet lease identity and idle", () => {
         for (let index = 0; index < 260; index += 1) {
           storage.seed(`runner:${String(index).padStart(4, "0")}`, runner);
         }
-        storage.seed("runner:z-active", { ...runner, stale: false });
-        storage.seed("runner:z-invalid", { ...runner, updatedAt: "invalid" });
-        storage.seed("runner:z-recent", { ...runner, updatedAt: new Date().toISOString() });
+        storage.seed("runner:z-never-stale", { ...runner, stale: false });
+        storage.seed("runner:z-recent-update", { ...runner, updatedAt: new Date().toISOString() });
+        storage.seed("runner:z-stale-rule", { ...runner, lastSeenAt: new Date().toISOString() });
+        storage.seed("runner:z-active", {
+          ...runner,
+          stale: false,
+          lastSeenAt: new Date().toISOString(),
+        });
+        storage.seed("runner:z-invalid", {
+          ...runner,
+          lastSeenAt: "invalid",
+          updatedAt: "invalid",
+        });
+        storage.seed("runner:z-recent", {
+          ...runner,
+          lastSeenAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
         storage.seed("runner:z-cutoff", {
           ...runner,
+          lastSeenAt: new Date(cutoff + 10_000).toISOString(),
           updatedAt: new Date(cutoff + 10_000).toISOString(),
+        });
+        storage.seed("runner:z-exact-cutoff", {
+          ...runner,
+          stale: false,
+          lastSeenAt: new Date(cutoff).toISOString(),
         });
         await fleet.alarm();
         expect(storage.value("runner:0000")).toBeUndefined();
         expect(storage.value("runner:0127")).toBeUndefined();
         expect(storage.value("runner:0128")).toBeDefined();
+        expect(storage.value("runner:z-exact-cutoff")).toBeDefined();
         expect(storage.value("maintenance:runner-prune")).toMatchObject({
           startAfter: "runner:0127",
         });
@@ -36455,6 +36479,13 @@ describe("fleet lease identity and idle", () => {
         vi.setSystemTime(storage.alarm()!);
         await fleet.alarm();
         expect(storage.value("runner:0259")).toBeUndefined();
+        for (const key of [
+          "runner:z-never-stale",
+          "runner:z-recent-update",
+          "runner:z-stale-rule",
+        ]) {
+          expect(storage.value(key)).toBeUndefined();
+        }
         for (const key of [
           "runner:z-active",
           "runner:z-invalid",
@@ -36478,44 +36509,565 @@ describe("fleet lease identity and idle", () => {
     },
   );
 
-  it("preserves an external runner revived after prune discovery and schedules sync-only maintenance", async () => {
-    const storage = new ObservedMemoryStorage();
-    const fleet = testFleet(storage);
-    const old = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString();
-    const runner: ExternalRunnerRecord = {
-      id: "revived",
-      provider: "blacksmith-testbox",
-      owner: "alice@example.com",
-      org: "example-org",
-      status: "missing",
-      stale: true,
-      firstSeenAt: old,
-      lastSeenAt: old,
-      updatedAt: old,
-    };
-    storage.seed("runner:revived", runner);
-    const original = storage.list.bind(storage);
-    vi.spyOn(storage, "list").mockImplementation(async (options) => {
-      const page = await original(options);
-      if (options?.prefix === "runner:")
-        storage.seed("runner:revived", { ...runner, stale: false });
-      return page;
-    });
-    await fleet.alarm();
-    expect(storage.value<ExternalRunnerRecord>("runner:revived")?.stale).toBe(false);
-    await storage.delete("maintenance:runner-prune");
-    await storage.deleteAlarm();
-    const response = await fleet.fetch(
-      request("POST", "/v1/runners/sync", {
-        headers: { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" },
-        body: { provider: "blacksmith-testbox", runners: [{ id: "new-runner", status: "ready" }] },
-      }),
-    );
-    expect(response.status).toBe(200);
-    expect(storage.value("maintenance:runner-prune")).toBeDefined();
-    expect(storage.alarm()).toBeGreaterThan(Date.now());
-    expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 60 * 60_000);
-  });
+  it.each([false, true])(
+    "preserves a revived external runner (stale=%s) and schedules sync-only maintenance",
+    async (stale) => {
+      const storage = new ObservedMemoryStorage();
+      const fleet = testFleet(storage);
+      const old = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString();
+      const runner: ExternalRunnerRecord = {
+        id: "revived",
+        provider: "blacksmith-testbox",
+        owner: "alice@example.com",
+        org: "example-org",
+        status: "missing",
+        stale,
+        firstSeenAt: old,
+        lastSeenAt: old,
+        updatedAt: old,
+      };
+      storage.seed("runner:revived", runner);
+      const original = storage.list.bind(storage);
+      vi.spyOn(storage, "list").mockImplementation(async (options) => {
+        const page = await original(options);
+        if (options?.prefix === "runner:")
+          storage.seed("runner:revived", {
+            ...runner,
+            stale: false,
+            lastSeenAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        return page;
+      });
+      await fleet.alarm();
+      expect(storage.value<ExternalRunnerRecord>("runner:revived")?.stale).toBe(false);
+      await storage.delete("maintenance:runner-prune");
+      await storage.deleteAlarm();
+      const response = await fleet.fetch(
+        request("POST", "/v1/runners/sync", {
+          headers: { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" },
+          body: {
+            provider: "blacksmith-testbox",
+            runners: [{ id: "new-runner", status: "ready" }],
+          },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(storage.value("maintenance:runner-prune")).toBeDefined();
+      expect(storage.alarm()).toBeGreaterThan(Date.now());
+      expect(storage.alarm()).toBeLessThanOrEqual(Date.now() + 60 * 60_000);
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "reconciles org inventories across owners but keeps legacy sync owner-scoped on %s",
+    async (runtime) => {
+      for (const inventoryScope of [undefined, "org"] as const) {
+        const storage = new ObservedMemoryStorage();
+        const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+        const headers = { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" };
+        const old = "2026-01-01T00:00:00.000Z";
+        const rows: ExternalRunnerRecord[] = [
+          {
+            id: "present",
+            owner: "bob@example.com",
+            org: "example-org",
+            provider: "blacksmith-testbox",
+            status: "ready",
+            firstSeenAt: old,
+            lastSeenAt: old,
+            updatedAt: old,
+          },
+          {
+            id: "absent",
+            owner: "bob@example.com",
+            org: "example-org",
+            provider: "blacksmith-testbox",
+            status: "ready",
+            firstSeenAt: old,
+            lastSeenAt: old,
+            updatedAt: old,
+          },
+        ];
+        rows.push({
+          ...rows[0]!,
+          owner: "alice@example.com",
+          firstSeenAt: "2026-02-01T00:00:00.000Z",
+        });
+        rows.push({ ...rows[1]!, owner: "alice@example.com" });
+        rows.push({ ...rows[1]!, org: "other-org" });
+        rows.push({ ...rows[1]!, provider: "other-provider" });
+        const key = (row: ExternalRunnerRecord) =>
+          `runner:${[row.provider, row.id, orgKeyForLabel(row.org), row.owner].map(encodeURIComponent).join(":")}`;
+        for (const row of rows) storage.seed(key(row), row);
+        // oxlint-disable-next-line eslint/no-await-in-loop -- each scope uses a separate coordinator fixture.
+        const response = await fleet.fetch(
+          request("POST", "/v1/runners/sync", {
+            headers,
+            body: {
+              provider: "blacksmith-testbox",
+              ...(inventoryScope ? { inventoryScope } : {}),
+              runners: [{ id: "present", status: "ready" }],
+            },
+          }),
+        );
+        expect(response.status).toBe(200);
+        // oxlint-disable-next-line eslint/no-await-in-loop -- inspect this scope's response before the next fixture.
+        const body = (await response.json()) as {
+          runners: ExternalRunnerRecord[];
+          stale: ExternalRunnerRecord[];
+        };
+        expect(body.runners[0]?.firstSeenAt).toBe("2026-02-01T00:00:00.000Z");
+        expect(body.stale.map((row) => row.owner)).toEqual(["alice@example.com"]);
+        expect(storage.value<ExternalRunnerRecord>(key(rows[1]!))?.stale).toBe(
+          inventoryScope ? true : undefined,
+        );
+        for (const row of [rows[0]!, rows[4]!, rows[5]!])
+          expect(storage.value<ExternalRunnerRecord>(key(row))?.stale).toBeUndefined();
+        for (const page of storage.listOptions.filter((options) => options.prefix === "runner:"))
+          expect(page).toMatchObject({ limit: 128, noCache: true });
+      }
+    },
+  );
+
+  it.each([null, "", "owner", "ORG", false, 1, {}, []])(
+    "rejects invalid runner inventory scope %j before writing",
+    async (inventoryScope) => {
+      const storage = new MemoryStorage();
+      const put = vi.spyOn(storage, "put");
+      const response = await testFleet(storage).fetch(
+        request("POST", "/v1/runners/sync", {
+          headers: { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" },
+          body: { provider: "blacksmith-testbox", inventoryScope, runners: [] },
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "invalid_inventory_scope" });
+      expect(put).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    "bounds foreign-owner sync writes and rechecks revival (admin: %s)",
+    async (admin) => {
+      class OrgSyncStorage extends ObservedMemoryStorage {
+        scanStarted = false;
+        readPassComplete = false;
+        pending = 0;
+        peakPending = 0;
+        override async list<T>(options: Parameters<CoordinatorStorageView["list"]>[0] = {}) {
+          const writingPass = this.readPassComplete;
+          const page = await super.list<T>(options);
+          if (options.prefix === "runner:") {
+            this.scanStarted = true;
+            if (page.size < 128) this.readPassComplete = true;
+            if (writingPass && page.has("runner:legacy-0000")) {
+              const row = this.value<ExternalRunnerRecord>("runner:legacy-0000")!;
+              this.seed("runner:legacy-0000", {
+                ...row,
+                lastSeenAt: new Date(Date.now() + 1000).toISOString(),
+              });
+            }
+          }
+          return page;
+        }
+        override async transaction<T>(
+          callback: (transaction: CoordinatorStorageView) => Promise<T>,
+        ): Promise<T> {
+          if (!this.scanStarted) return super.transaction(callback);
+          expect(this.readPassComplete).toBe(true);
+          this.pending++;
+          this.peakPending = Math.max(this.peakPending, this.pending);
+          try {
+            return await super.transaction(callback);
+          } finally {
+            this.pending--;
+          }
+        }
+      }
+      const storage = new OrgSyncStorage();
+      const old = "2026-01-01T00:00:00.000Z";
+      for (let i = 0; i < 260; i++) {
+        storage.seed(`runner:legacy-${String(i).padStart(4, "0")}`, {
+          id: "missing",
+          provider: "blacksmith-testbox",
+          owner: `owner-${i}@example.com`,
+          org: "example-org",
+          status: "ready",
+          firstSeenAt: old,
+          lastSeenAt: old,
+          updatedAt: old,
+        } satisfies ExternalRunnerRecord);
+      }
+      const response = await testFleet(storage).fetch(
+        request("POST", "/v1/runners/sync", {
+          headers: {
+            "x-crabbox-owner": "alice@example.com",
+            "x-crabbox-org": "example-org",
+            ...(admin ? { "x-crabbox-admin": "true" } : {}),
+          },
+          body: { provider: "blacksmith-testbox", inventoryScope: "org", runners: [] },
+        }),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { stale: ExternalRunnerRecord[] };
+      expect(body.stale).toHaveLength(admin ? 259 : 0);
+      expect(storage.value<ExternalRunnerRecord>("runner:legacy-0000")?.stale).toBeUndefined();
+      for (let i = 1; i < 260; i++)
+        expect(
+          storage.value<ExternalRunnerRecord>(`runner:legacy-${String(i).padStart(4, "0")}`)?.stale,
+        ).toBe(true);
+      expect(storage.peakPending).toBe(128);
+      expect(storage.pending).toBe(0);
+      expect(storage.alarm()).toBeGreaterThan(Date.now());
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "deduplicates newest visible runners before filters and backfills capped results on %s",
+    async (runtime) => {
+      const storage = new ObservedMemoryStorage();
+      const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+      const now = Date.now();
+      const row: ExternalRunnerRecord = {
+        id: "duplicate",
+        provider: "blacksmith-testbox",
+        owner: "alice@example.com",
+        org: "example-org",
+        status: "ready",
+        firstSeenAt: new Date(now).toISOString(),
+        lastSeenAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      };
+      // Legacy keys and many owner copies span more than one candidate batch.
+      for (let i = 0; i < 260; i++)
+        storage.seed(`runner:copy-${String(i).padStart(4, "0")}`, {
+          ...row,
+          owner: i === 0 ? row.owner : `owner-${i}@example.com`,
+          lastSeenAt: new Date(now - i * 1000).toISOString(),
+        });
+      storage.seed("runner:filtered-newest", {
+        ...row,
+        id: "filtered",
+        status: "missing",
+        stale: true,
+      });
+      storage.seed("runner:filtered-old", {
+        ...row,
+        id: "filtered",
+        lastSeenAt: new Date(now - 1000).toISOString(),
+        updatedAt: new Date(now + 1000).toISOString(),
+      });
+      storage.seed("runner:other-org", { ...row, org: "other-org" });
+      storage.seed("runner:other-provider", { ...row, provider: "other-provider" });
+      const headers = {
+        "x-crabbox-owner": row.owner,
+        "x-crabbox-org": row.org,
+        "x-crabbox-admin": "true",
+      };
+      const list = async (query: string, requestHeaders = headers) => {
+        const response = await fleet.fetch(
+          request("GET", `/v1/runners${query}`, { headers: requestHeaders }),
+        );
+        expect(response.status).toBe(200);
+        return (await response.json()) as { runners: ExternalRunnerRecord[]; truncated?: boolean };
+      };
+      const all = await list("?limit=200");
+      expect(all.runners).toHaveLength(4);
+      expect(all.truncated).toBeUndefined();
+      expect(
+        all.runners.find(
+          (r) => r.id === "duplicate" && r.org === "example-org" && r.provider === row.provider,
+        )?.owner,
+      ).toBe(row.owner);
+      const filtered = await list("?status=ready&stale=false&limit=200");
+      expect(filtered.runners).toHaveLength(3);
+      expect(filtered.runners.some((r) => r.id === "filtered")).toBe(false);
+      const capped = await list("?status=ready&stale=false&limit=1");
+      expect(capped.runners).toHaveLength(1);
+      expect(capped.truncated).toBe(true);
+      const own = await list("?limit=200", { ...headers, "x-crabbox-admin": "false" });
+      expect(own.runners.map((r) => r.id).toSorted()).toEqual([
+        "duplicate",
+        "duplicate",
+        "filtered",
+      ]);
+      const home = await fleet.fetch(request("GET", "/portal", { headers }));
+      const html = await home.text();
+      expect(html.match(/class="external-row"/g)).toHaveLength(3);
+      expect(html).not.toContain("/portal/runners/blacksmith-testbox/filtered");
+      for (const page of storage.listOptions.filter((options) => options.prefix === "runner:"))
+        expect(page).toMatchObject({ limit: 128, noCache: true });
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "uses exactly two runner scans for duplicate-heavy inventories and bounded results on %s",
+    async (runtime) => {
+      const storage = new ObservedMemoryStorage();
+      const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+      const now = Date.now();
+      const owner = "alice@example.com";
+      const org = "example-org";
+      const row: ExternalRunnerRecord = {
+        id: "duplicate",
+        provider: "blacksmith-testbox",
+        owner,
+        org,
+        status: "ready",
+        firstSeenAt: new Date(now).toISOString(),
+        lastSeenAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      };
+      const keys: string[] = [];
+      const winners: Array<{ key: string; runner: ExternalRunnerRecord }> = [];
+      const ownWinners: typeof winners = [];
+      const seed = (key: string, runner: ExternalRunnerRecord) => {
+        storage.seed(key, runner);
+        keys.push(key);
+        return { key, runner };
+      };
+      for (let identity = 0; identity < 50; identity++) {
+        for (let copy = 0; copy < 40; copy++) {
+          const winner = copy === (identity === 3 ? 38 : 39);
+          const entry = seed(`runner:copy-${identity}-${String(copy).padStart(2, "0")}`, {
+            ...row,
+            id: `duplicate-${identity}`,
+            owner: copy === 0 ? owner : `owner-${copy}@example.com`,
+            status: copy === 39 && identity < 2 ? "missing" : "ready",
+            stale: copy === 39 && identity === 0,
+            lastSeenAt: new Date(
+              now -
+                (identity === 2 ? EXTERNAL_RUNNER_FRESHNESS + 1000 : 0) -
+                (identity === 3 && copy >= 38 ? 1 : 39 - copy) * 1000,
+            ).toISOString(),
+            // The oldest copy sorts first, but must never displace the decisive copy.
+            updatedAt: new Date(now + (copy === 0 ? 100_000 : identity * 1000)).toISOString(),
+          });
+          if (winner) winners.push(entry);
+          if (copy === 0) ownWinners.push(entry);
+        }
+      }
+      for (let index = 0; index < 220; index++) {
+        const entry = seed(`runner:singleton-${String(index).padStart(3, "0")}`, {
+          ...row,
+          id: `singleton-${index}`,
+          updatedAt: new Date(now - index * 1000).toISOString(),
+        });
+        winners.push(entry);
+        ownWinners.push(entry);
+      }
+      for (const extra of [
+        { ...row, id: "duplicate-0", org: "other-org" },
+        { ...row, id: "duplicate-0", provider: "other-provider" },
+      ]) {
+        const entry = seed(`runner:extra-${keys.length}`, extra);
+        winners.push(entry);
+        if (extra.org === org) ownWinners.push(entry);
+      }
+      const expected = (entries: typeof winners, readyOnly = false) =>
+        entries
+          .map(({ key, runner }) => ({
+            key,
+            runner: {
+              ...runner,
+              stale:
+                runner.stale === true ||
+                Date.parse(runner.lastSeenAt) < now - EXTERNAL_RUNNER_FRESHNESS,
+            },
+          }))
+          .filter(({ runner }) => !readyOnly || (runner.status === "ready" && !runner.stale))
+          .toSorted(
+            (a, b) =>
+              Number(a.runner.stale) - Number(b.runner.stale) ||
+              b.runner.updatedAt.localeCompare(a.runner.updatedAt) ||
+              a.key.localeCompare(b.key),
+          )
+          .map(({ runner }) => ({
+            id: runner.id,
+            owner: runner.owner,
+            org: runner.org,
+            provider: runner.provider,
+          }));
+      const sortedKeys = keys.toSorted((a, b) => a.localeCompare(b));
+      const scanPages = Array.from({ length: Math.floor(keys.length / 128) + 1 }, (_, index) => ({
+        prefix: "runner:",
+        limit: 128,
+        noCache: true,
+        ...(index ? { startAfter: sortedKeys[index * 128 - 1] } : {}),
+      }));
+      const list = async (query: string, admin = true) => {
+        storage.resetListOptions();
+        const response = await fleet.fetch(
+          request("GET", `/v1/runners${query}`, {
+            headers: {
+              "x-crabbox-owner": owner,
+              "x-crabbox-org": org,
+              "x-crabbox-admin": String(admin),
+            },
+          }),
+        );
+        expect(response.status).toBe(200);
+        expect(storage.listOptions.filter(({ prefix }) => prefix === "runner:")).toEqual([
+          ...scanPages,
+          ...scanPages,
+        ]);
+        return (await response.json()) as { runners: ExternalRunnerRecord[]; truncated?: boolean };
+      };
+      const summarize = (runners: ExternalRunnerRecord[]) =>
+        runners.map((runner) => ({
+          id: runner.id,
+          owner: runner.owner,
+          org: runner.org,
+          provider: runner.provider,
+        }));
+      const capped = await list("?limit=500");
+      expect(summarize(capped.runners)).toEqual(expected(winners).slice(0, 200));
+      expect(capped.truncated).toBe(true);
+      const filtered = await list("?status=ready&stale=false&limit=17");
+      expect(summarize(filtered.runners)).toEqual(expected(winners, true).slice(0, 17));
+      expect(filtered.truncated).toBe(true);
+      const stale = await list("?stale=true&limit=200");
+      expect(stale.runners.map((runner) => runner.id)).toEqual(["duplicate-2", "duplicate-0"]);
+      expect(stale.truncated).toBeUndefined();
+      const missing = await list("?status=missing&limit=200");
+      expect(missing.runners.map((runner) => runner.id)).toEqual(["duplicate-1", "duplicate-0"]);
+      expect(missing.truncated).toBeUndefined();
+      const own = await list("?limit=200", false);
+      expect(summarize(own.runners)).toEqual(expected(ownWinners).slice(0, 200));
+      expect(own.truncated).toBe(true);
+      expect(await list("?provider=absent")).toEqual({ runners: [] });
+      // IncludeStale=false uses the same two passes for the portal.
+      storage.resetListOptions();
+      const home = await fleet.fetch(
+        request("GET", "/portal", { headers: { "x-crabbox-admin": "true" } }),
+      );
+      const html = await home.text();
+      expect(html.match(/class="external-row"/g)).toHaveLength(200);
+      expect(html).not.toContain("/portal/runners/blacksmith-testbox/duplicate-2?");
+      expect(storage.listOptions.filter(({ prefix }) => prefix === "runner:")).toEqual([
+        ...scanPages,
+        ...scanPages,
+      ]);
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "keeps decisive runner keys when copies change between the two scans on %s",
+    async (runtime) => {
+      const storage = new ObservedMemoryStorage();
+      const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+      const now = Date.now();
+      const row: ExternalRunnerRecord = {
+        id: "runner",
+        provider: "blacksmith-testbox",
+        owner: "alice@example.com",
+        org: "example-org",
+        status: "ready",
+        firstSeenAt: new Date(now).toISOString(),
+        lastSeenAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      };
+      storage.seed("runner:a-old", { ...row, lastSeenAt: new Date(now - 1000).toISOString() });
+      storage.seed("runner:b-winner", row);
+      storage.seed("runner:c-suppressed-old", { ...row, id: "suppressed" });
+      storage.seed("runner:d-suppressed-winner", {
+        ...row,
+        id: "suppressed",
+        stale: true,
+        status: "missing",
+        lastSeenAt: new Date(now + 1000).toISOString(),
+      });
+      const beforeList = storage.beforeList.bind(storage);
+      vi.spyOn(storage, "beforeList").mockImplementation(async (options) => {
+        await beforeList(options);
+        if (storage.listOptions.filter(({ prefix }) => prefix === "runner:").length === 2) {
+          storage.seed("runner:a-old", { ...row, lastSeenAt: new Date(now + 2000).toISOString() });
+          storage.seed("runner:e-inserted", {
+            ...row,
+            lastSeenAt: new Date(now + 3000).toISOString(),
+          });
+          storage.seed("runner:f-new-identity", { ...row, id: "new-identity" });
+        }
+      });
+      const response = await fleet.fetch(
+        request("GET", "/v1/runners?status=ready&stale=false", {
+          headers: { "x-crabbox-admin": "true" },
+        }),
+      );
+      const body = (await response.json()) as { runners: ExternalRunnerRecord[] };
+      expect(body.runners.map((runner) => runner.id)).toEqual(["runner"]);
+      expect(body.runners[0]?.lastSeenAt).toBe(row.lastSeenAt);
+      expect(storage.listOptions.filter(({ prefix }) => prefix === "runner:")).toHaveLength(2);
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "uses exactly two empty runner scans on %s",
+    async (runtime) => {
+      const storage = new ObservedMemoryStorage();
+      const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+      const response = await fleet.fetch(request("GET", "/v1/runners"));
+      expect(await response.json()).toEqual({ runners: [] });
+      expect(storage.listOptions.filter(({ prefix }) => prefix === "runner:")).toEqual([
+        { prefix: "runner:", limit: 128, noCache: true },
+        { prefix: "runner:", limit: 128, noCache: true },
+      ]);
+    },
+  );
+
+  it.each(["cloudflare", "shared"])(
+    "treats runners older than the freshness boundary as stale without mutating storage on %s",
+    async (runtime) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const storage = new MemoryStorage();
+        const fleet = runtime === "cloudflare" ? testFleet(storage) : testCoordinator(storage);
+        const headers = { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" };
+        for (const [id, offset] of [
+          ["old", -1],
+          ["boundary", 0],
+          ["fresh", 1],
+        ] as const) {
+          const seen = new Date(Date.now() - EXTERNAL_RUNNER_FRESHNESS + offset).toISOString();
+          storage.seed(`runner:${id}`, {
+            id,
+            provider: "blacksmith-testbox",
+            owner: headers["x-crabbox-owner"],
+            org: "example-org",
+            status: "ready",
+            firstSeenAt: seen,
+            lastSeenAt: seen,
+            updatedAt: new Date().toISOString(),
+          } satisfies ExternalRunnerRecord);
+        }
+        for (const [query, expected] of [
+          ["", ["boundary", "fresh", "old"]],
+          ["?stale=true", ["old"]],
+          ["?stale=false", ["boundary", "fresh"]],
+        ] as const) {
+          // oxlint-disable-next-line eslint/no-await-in-loop -- compare each filter against the same frozen boundary.
+          const response = await fleet.fetch(request("GET", `/v1/runners${query}`, { headers }));
+          // oxlint-disable-next-line eslint/no-await-in-loop -- consume the response for this filter.
+          const body = (await response.json()) as { runners: ExternalRunnerRecord[] };
+          expect(body.runners.map((r) => r.id).toSorted()).toEqual(expected);
+          for (const runner of body.runners)
+            expect(runner.stale === true).toBe(runner.id === "old");
+        }
+        const home = await fleet.fetch(request("GET", "/portal", { headers }));
+        const html = await home.text();
+        expect(html.match(/class="external-row"/g)).toHaveLength(2);
+        expect(html).not.toContain("/portal/runners/blacksmith-testbox/old");
+        expect(
+          (await fleet.fetch(request("GET", "/portal/runners/blacksmith-testbox/old", { headers })))
+            .status,
+        ).toBe(200);
+        expect(storage.value<ExternalRunnerRecord>("runner:old")?.stale).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("syncs external runner visibility and marks missing runners stale", async () => {
     const storage = new MemoryStorage();
