@@ -98,6 +98,7 @@ func (a App) providers(ctx context.Context, args []string) error {
 	}
 	fs := newFlagSet("providers", a.Stderr)
 	jsonOut := fs.Bool("json", false, "print JSON")
+	configured := fs.Bool("configured", false, "include features enabled by trusted configuration (loads config)")
 	filterFlags := registerProviderMatrixFilterFlags(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -106,6 +107,13 @@ func (a App) providers(ctx context.Context, args []string) error {
 		return Exit(2, "usage: crabbox providers [--json] [--kind KIND] [--category CATEGORY] [--target TARGET] [--feature FEATURE] [--runtime CAPABILITY] [--reachability CAPABILITY] [--workspace CAPABILITY] [--evidence CAPABILITY] [--lifecycle CAPABILITY] OR crabbox providers filters [--json] OR crabbox providers recommend <use-case> [--limit N] [--json]")
 	}
 	entries := providerMatrix()
+	if *configured {
+		var err error
+		entries, err = configuredProviderMatrix()
+		if err != nil {
+			return err
+		}
+	}
 	filters := filterFlags.filters()
 	if err := validateProviderMatrixFilters(filters, entries); err != nil {
 		return err
@@ -212,8 +220,30 @@ func providerMatrix() []providerMatrixEntry {
 	return entries
 }
 
+func configuredProviderMatrix() ([]providerMatrixEntry, error) {
+	cfg, err := loadConfigInputs()
+	if err != nil {
+		return nil, err
+	}
+	providers := registeredProviders()
+	entries := make([]providerMatrixEntry, 0, len(providers))
+	for _, provider := range providers {
+		spec := provider.Spec()
+		spec.Features = ProviderFeaturesForConfig(provider, cfg)
+		entry := providerMatrixEntryForSpec(provider, spec)
+		if _, ok := provider.(ProviderConfiguredFeatures); ok {
+			entry.MetadataKind = "configured"
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 func providerMatrixEntryFor(provider Provider) providerMatrixEntry {
-	spec := provider.Spec()
+	return providerMatrixEntryForSpec(provider, provider.Spec())
+}
+
+func providerMatrixEntryForSpec(provider Provider, spec ProviderSpec) providerMatrixEntry {
 	name := spec.Name
 	category := benchmarkProviderCategories[name]
 	targets := formatProviderTargets(spec.Targets)
