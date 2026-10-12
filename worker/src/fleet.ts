@@ -21,6 +21,7 @@ import {
   lifetimeDeadline,
   lifetimeNextAlarm,
   lifetimeRetryMs,
+  lifetimeStopConfirmMs,
   lifetimeWarningMs,
   extendLeaseLifetime,
   observeLifetimeCompute,
@@ -18199,6 +18200,9 @@ export class FleetCoordinator {
           delete current.providerAccessExpiresAt;
         } else {
           policy.status = "stopping";
+          const stopAge = now.getTime() - Date.parse(policy.stopStartedAt ?? "");
+          if (stopAge >= 0 && stopAge < lifetimeRetryMs)
+            policy.nextCheckAt = new Date(now.getTime() + lifetimeStopConfirmMs).toISOString();
         }
         await this.putLease(current);
       });
