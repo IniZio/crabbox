@@ -17,7 +17,13 @@ const (
 	runRecorderFinishTimeout   = 60 * time.Second
 	runRecorderFinishAttempts  = 3
 	runRecorderFinishRetry     = 250 * time.Millisecond
+	// Leave recovery time after a saturated coordinator's per-request timeout.
+	runAdmissionBudget   = 30 * time.Second
+	runAdmissionAttempts = 4
 )
+
+// Production backoff honors Retry-After; sequential tests may stub it to avoid real sleeps.
+var runAdmissionRetryDelay = coordinatorReadBackoff
 
 type runRecorder struct {
 	coord              *CoordinatorClient
@@ -98,6 +104,7 @@ func (r *runRecorder) createRun(ctx context.Context, leaseID string, cfg Config)
 			TokenCommand:     append([]string(nil), r.coord.TokenCommand...),
 			ChildEnvDenylist: append([]string(nil), r.coord.ChildEnvDenylist...),
 			Client:           r.coord.Client,
+			readRetryWriter:  r.stderr,
 			admissionAuth:    &coordinatorAdmissionAuth{},
 		}
 		r.createBaseURL = strings.TrimRight(r.coord.BaseURL, "/")
