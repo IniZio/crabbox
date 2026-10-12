@@ -9,12 +9,125 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	core "github.com/openclaw/crabbox/internal/cli"
 	"github.com/openclaw/crabbox/internal/providers/localcontainer"
 )
+
+type slowPreparationRuntime struct {
+	started    chan struct{}
+	heartbeats atomic.Int32
+	refreshed  atomic.Int32
+	removed    atomic.Int32
+}
+
+func (f *slowPreparationRuntime) Run(ctx context.Context, req core.LocalCommandRequest) (core.LocalCommandResult, error) {
+	if req.Name != "docker" {
+		return core.LocalCommandResult{}, nil // Host capacity sampling.
+	}
+	a := req.Args
+	switch a[0] {
+	case "version":
+		return core.LocalCommandResult{Stdout: "test-runtime"}, nil
+	case "image":
+		if a[2] == "configured:stable" {
+			return core.LocalCommandResult{Stdout: `[{"Id":"sha256:base"}]`}, nil
+		}
+		return core.LocalCommandResult{}, fmt.Errorf("No such image")
+	case "run":
+		if a[1] == "--rm" {
+			if f.heartbeats.Load() == 0 {
+				return core.LocalCommandResult{}, fmt.Errorf("preparation started before first heartbeat")
+			}
+			return core.LocalCommandResult{Stdout: "prepare"}, nil
+		}
+		close(f.started)
+		<-ctx.Done()
+		return core.LocalCommandResult{}, ctx.Err()
+	case "ps":
+		return core.LocalCommandResult{Stdout: "existing"}, nil
+	case "inspect":
+		return core.LocalCommandResult{Stdout: `[{"Id":"existing","State":{"Running":true},"Config":{"Labels":{"lease":"cbx_123456abcdef","crabbox.serve":"true","crabbox.serve.machine":"test-machine"}},"NetworkSettings":{"Ports":{"2222/tcp":[{"HostIp":"127.0.0.1","HostPort":"22222"}]}}}]`}, nil
+	case "exec":
+		f.refreshed.Add(1)
+		return core.LocalCommandResult{}, nil
+	case "rm":
+		if a[2] == "existing" {
+			f.removed.Add(1)
+		}
+		return core.LocalCommandResult{}, nil
+	}
+	return core.LocalCommandResult{}, fmt.Errorf("unexpected runtime command: %v", a)
+}
+
+func TestAgentRestartReconcilesDuringSlowImagePreparation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f := &slowPreparationRuntime{started: make(chan struct{})}
+	l := assignment{ID: "cbx_123456abcdef", MachineID: "test-machine", CPUs: 1, MemoryMB: 1024, Image: "configured:stable", State: "running", ExpiresAt: time.Now().Add(time.Hour), IdleDeadline: time.Now().Add(time.Hour).UnixMilli()}
+	reports := make(chan machine, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/serve/heartbeat" {
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var m machine
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			t.Error(err)
+		}
+		if !m.Draining {
+			f.heartbeats.Add(1)
+			reports <- m
+		}
+		_ = json.NewEncoder(w).Encode(heartbeat{Assignments: []assignment{l}})
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	saved := agent{opts: options{stateDir: dir}, state: localState{Machine: machine{MachineID: l.MachineID}, Assignments: map[string]assignment{l.ID: l}}}
+	if err := saved.save(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- (Provider{}).RunAgent(ctx, core.Config{Coordinator: server.URL, CoordToken: "synthetic", LocalContainer: core.LocalContainerConfig{Runtime: "docker", Image: l.Image}}, core.Runtime{Exec: f, Stdout: io.Discard, Stderr: io.Discard}, []string{"--state-dir", dir, "--memory", "2g", "--cpus", "2", "--advertise-address", "127.0.0.1", "--no-cache-volumes", "--poll-interval", "500ms"})
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("agent did not cancel and clean up preparation")
+		}
+	}()
+	select {
+	case <-f.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("preparation did not start after initial reconciliation")
+	}
+	// Preparation remains blocked until cancellation, across multiple real
+	// polling intervals. Existing assignments must keep reaching the broker.
+	for range 4 {
+		select {
+		case m := <-reports:
+			if len(m.Leases) != 1 || m.Leases[0].ID != l.ID || m.Leases[0].State != "running" {
+				t.Fatalf("lost existing assignment: %+v", m.Leases)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("slow preparation delayed heartbeat")
+		}
+	}
+	if f.refreshed.Load() < 3 || f.removed.Load() != 0 {
+		t.Fatalf("refreshes=%d removals=%d", f.refreshed.Load(), f.removed.Load())
+	}
+}
 
 func TestAddressSelection(t *testing.T) {
 	for _, tt := range []struct{ ip, want string }{{"100.64.1.2/24", "100.64.1.2"}, {"100.127.255.1/24", "100.127.255.1"}, {"100.128.1.1/24", ""}, {"192.168.1.1/24", ""}} {
@@ -276,5 +389,82 @@ func TestShutdownRefreshesInventoryBeforeDrainingHeartbeat(t *testing.T) {
 				t.Fatalf("leases=%v removed=%v", got.Leases, containers.removed)
 			}
 		})
+	}
+}
+
+// Two List calls precede each heartbeat. Alternating slow and fast polls expose
+// both fixed-cadence compression and the ticker's buffered-tick catch-up.
+type pacedContainers struct {
+	fakeContainers
+	lists int
+	delay time.Duration
+}
+
+func (f *pacedContainers) List(ctx context.Context) ([]localcontainer.ServedContainer, error) {
+	f.lists++
+	if f.lists%4 == 1 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, nil
+}
+
+func TestAgentRunPacesHeartbeatReceipts(t *testing.T) {
+	const interval = 500 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var receipts []time.Time
+	var accepted time.Time
+	rateLimited, drained := 0, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m machine
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			t.Error(err)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if m.Draining {
+			drained = true
+		} else {
+			now := time.Now()
+			receipts = append(receipts, now)
+			if len(receipts) == 4 {
+				defer cancel()
+			}
+			if !accepted.IsZero() && now.Sub(accepted) < interval {
+				rateLimited++
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"error":"serve_rate_limited"}`)
+				return
+			}
+			accepted = now
+		}
+		_ = json.NewEncoder(w).Encode(heartbeat{})
+	}))
+	defer server.Close()
+	coord, err := core.NewCoordinatorClient(core.Config{Coordinator: server.URL, CoordToken: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := agent{coord: coord, containers: &pacedContainers{delay: 450 * time.Millisecond}, opts: options{interval: interval, stateDir: t.TempDir()}, state: localState{Machine: machine{MachineID: "m"}}, rt: core.Runtime{Stderr: io.Discard}}
+	if err := a.run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if rateLimited != 0 || len(receipts) != 4 || !drained {
+		t.Errorf("rate limited=%d receipts=%d drained=%t", rateLimited, len(receipts), drained)
+	}
+	for i := 1; i < len(receipts); i++ {
+		gap := receipts[i].Sub(receipts[i-1])
+		t.Logf("heartbeat gap %d: %s", i, gap)
+		if gap < interval {
+			t.Errorf("heartbeat gap %d = %s, want >= %s", i, gap, interval)
+		}
 	}
 }

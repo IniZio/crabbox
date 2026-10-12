@@ -81,13 +81,15 @@ type options struct {
 	noCache, drain                                bool
 }
 type agent struct {
-	opts       options
-	state      localState
-	coord      *core.CoordinatorClient
-	containers containerRuntime
-	rt         core.Runtime
-	volumes    []core.CacheVolumeConfig
-	ports      *portPool
+	lastHeartbeatReturned time.Time
+	opts                  options
+	state                 localState
+	coord                 *core.CoordinatorClient
+	containers            containerRuntime
+	rt                    core.Runtime
+	volumes               []core.CacheVolumeConfig
+	ports                 *portPool
+	startPreparation      func(context.Context)
 }
 type containerRuntime interface {
 	List(context.Context) ([]localcontainer.ServedContainer, error)
@@ -250,7 +252,7 @@ func (Provider) RunAgent(ctx context.Context, cfg core.Config, rt core.Runtime, 
 		return err
 	}
 	prepareCtx, cancelPrepare := context.WithTimeout(ctx, 10*time.Minute)
-	err = container.Prepare(prepareCtx)
+	err = container.EnsureImage(prepareCtx)
 	cancelPrepare()
 	if err != nil {
 		return err
@@ -267,25 +269,43 @@ func (Provider) RunAgent(ctx context.Context, cfg core.Config, rt core.Runtime, 
 	if o.noCache {
 		volumes = nil
 	}
-	a := agent{opts: o, state: state, coord: coord, containers: container, rt: rt, volumes: volumes, ports: ports}
+	a := agent{opts: o, state: state, coord: coord, containers: container, rt: rt, volumes: volumes, ports: ports, startPreparation: container.StartPreparation}
 	if err := a.save(); err != nil {
 		return err
 	}
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ticker := time.NewTicker(o.interval)
-	defer ticker.Stop()
+	defer func() {
+		stop()
+		container.WaitPreparation()
+	}()
+	return a.run(runCtx)
+}
+
+func (a *agent) run(ctx context.Context) error {
+	startedPreparation := false
 	for {
-		if err := a.poll(runCtx); err != nil && runCtx.Err() == nil {
-			fmt.Fprintf(rt.Stderr, "serve heartbeat: %v\n", err)
+		pollStart := time.Now()
+		if err := a.poll(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.rt.Stderr, "serve heartbeat: %v\n", err)
 		}
+		if !startedPreparation && a.startPreparation != nil {
+			a.startPreparation(ctx)
+			startedPreparation = true
+		}
+		next := pollStart.Add(a.opts.interval)
+		if afterHeartbeat := a.lastHeartbeatReturned.Add(a.opts.interval); afterHeartbeat.After(next) {
+			next = afterHeartbeat
+		}
+		timer := time.NewTimer(time.Until(next))
 		select {
-		case <-runCtx.Done():
+		case <-ctx.Done():
+			timer.Stop()
 			return a.shutdown()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
+
 func parseMemory(s string) (int, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	factor := 1
@@ -413,7 +433,9 @@ func (a *agent) poll(ctx context.Context) error {
 		a.state.Machine.MaxLeases = min(a.opts.maxLeases, a.ports.capacity())
 	}
 	var response heartbeat
-	if err := a.coord.AgentRequest(bounded, "POST", "/v1/serve/heartbeat", a.state.Machine, &response); err != nil {
+	err = a.coord.AgentRequest(bounded, "POST", "/v1/serve/heartbeat", a.state.Machine, &response)
+	a.lastHeartbeatReturned = time.Now()
+	if err != nil {
 		return err
 	}
 	a.state.LastSuccess = time.Now()

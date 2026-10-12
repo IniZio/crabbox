@@ -42,11 +42,21 @@ func TestServedCreationUsesSharedBootstrapWithoutHostMounts(t *testing.T) {
 func TestServedRuntimeRejectsForeignImageBeforeExecution(t *testing.T) {
 	runner := &servedRecordingRunner{}
 	r := NewServedRuntime(core.Config{LocalContainer: core.LocalContainerConfig{Runtime: "docker", Image: "configured:stable"}}, core.Runtime{Exec: runner})
+	r.preparedImageID = "sha256:prepared"
 	_, err := r.Create(context.Background(), "cbx_123456abcdef", "ssh-ed25519 AAAA", 1, 1024, "foreign:latest", nil, ServedContainerOptions{})
 	if err == nil || !strings.Contains(err.Error(), "serve_image_mismatch") {
 		t.Fatal(err)
 	}
 	if len(runner.args) != 0 {
 		t.Fatal("foreign image reached runtime", runner.args)
+	}
+}
+
+// Served leases regenerate host keys per lease; ordinary local-container leases must keep the shared bootstrap unchanged.
+func TestServedHostKeyPolicyStaysOutOfOrdinaryBootstrap(t *testing.T) {
+	for _, served := range []string{"ssh-keygen -A", "rm -f /etc/ssh/ssh_host_*"} {
+		if strings.Contains(bootstrapScript, served) {
+			t.Fatalf("served host-key policy %q leaked into ordinary local-container bootstrap", served)
+		}
 	}
 }

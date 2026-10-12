@@ -2,9 +2,11 @@ package localcontainer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	core "github.com/openclaw/crabbox/internal/cli"
 )
@@ -12,10 +14,11 @@ import (
 // ServedContainerOptions selects the outbound agent's stricter container policy.
 // The ordinary local-container path never supplies these options.
 type ServedContainerOptions struct {
-	PublishHost string
-	PublishPort string
-	Labels      map[string]string
-	Deadline    int64
+	PublishHost  string
+	PublishPort  string
+	Labels       map[string]string
+	Deadline     int64
+	runtimeImage string
 }
 
 // The watchdog lives inside PID 1's container namespace; --rm removes the container
@@ -36,9 +39,23 @@ printf '%s\n' "$CRABBOX_SERVE_DEADLINE" > /run/crabbox-serve-deadline
  kill -KILL -1
 ) &
 umask 022
+# Never inherit host keys from a configured or prepared image.
+rm -f /etc/ssh/ssh_host_*
+if [ ! -f /etc/ssh/ssh_host_ed25519_key ] && command -v ssh-keygen >/dev/null 2>&1; then
+ ssh-keygen -A || exit 1
+fi
 `
 
-type ServedRuntime struct{ b *backend }
+type ServedRuntime struct {
+	imageMu         sync.RWMutex
+	baseImageID     string
+	b               *backend
+	preparedImageID string
+	baseImage       servedImage
+	preparationCtx  context.Context
+	preparationDone chan struct{}
+	preparing       bool
+}
 type ServedContainer struct {
 	ID, LeaseID string
 	Labels      map[string]string
@@ -79,7 +96,25 @@ func (r *ServedRuntime) Create(ctx context.Context, id, key string, cpus, memory
 	if image != r.Image() {
 		return ServedContainer{}, fmt.Errorf("serve_image_mismatch")
 	}
+	r.imageMu.RLock()
+	options.runtimeImage = r.preparedImageID
+	r.imageMu.RUnlock()
 	idResult, _, err := r.b.createContainerWithOptions(ctx, cfg, "crabbox-serve-"+id, id, "", key, "", false, &options)
+	if err != nil && options.runtimeImage != "" && r.preparedImageMissing(ctx, options.runtimeImage) {
+		r.imageMu.Lock()
+		if r.preparedImageID == options.runtimeImage {
+			r.preparedImageID = ""
+		}
+		preparationCtx := r.preparationCtx
+		r.imageMu.Unlock()
+		// Other agents can prune this shared image while we are idle. This lease
+		// keeps the configured image and bootstraps normally while we rebuild.
+		options.runtimeImage = ""
+		if preparationCtx != nil {
+			r.StartPreparation(preparationCtx)
+		}
+		idResult, _, err = r.b.createContainerWithOptions(ctx, cfg, "crabbox-serve-"+id, id, "", key, "", false, &options)
+	}
 	if err != nil {
 		return ServedContainer{}, err
 	}
@@ -124,9 +159,31 @@ func (r *ServedRuntime) PruneCaches(ctx context.Context, volumes []core.CacheVol
 	if err != nil {
 		return err
 	}
+	var volumeErr error
 	for _, mount := range mounts {
 		name, _, _ := strings.Cut(mount, ":")
 		if _, err := r.b.docker(ctx, []string{"volume", "rm", name}, nil, r.b.rt.Stderr); err != nil {
+			volumeErr = errors.Join(volumeErr, err)
+		}
+	}
+	return errors.Join(volumeErr, r.prunePreparedImages(ctx))
+}
+
+func (r *ServedRuntime) prunePreparedImages(ctx context.Context) error {
+	result, err := r.b.docker(ctx, []string{"image", "ls", "--filter", "label=crabbox.serve.prepared=true", "--format", "{{.ID}}", "--no-trunc"}, nil, nil)
+	if err != nil {
+		return err
+	}
+	for _, id := range strings.Fields(result.Stdout) {
+		used, err := r.b.docker(ctx, []string{"ps", "-q", "--filter", "ancestor=" + id}, nil, nil)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(used.Stdout) != "" {
+			continue
+		}
+		// No force: the runtime also protects containers created after the check.
+		if _, err := r.b.docker(ctx, []string{"image", "rm", id}, nil, r.b.rt.Stderr); err != nil {
 			return err
 		}
 	}
@@ -134,21 +191,26 @@ func (r *ServedRuntime) PruneCaches(ctx context.Context, volumes []core.CacheVol
 }
 
 func (r *ServedRuntime) Image() string { return r.b.cfg.LocalContainer.Image }
-func (r *ServedRuntime) Prepare(ctx context.Context) error {
-	_, err := r.b.docker(ctx, []string{"image", "inspect", r.Image()}, nil, nil)
-	if err == nil {
-		return nil
-	}
-	_, err = r.b.docker(ctx, []string{"pull", r.Image()}, nil, r.b.rt.Stderr)
-	return err
-}
 
 func (r *ServedRuntime) Evidence(ctx context.Context, c ServedContainer) (*core.ImageEvidence, error) {
 	observed, err := r.b.inspectContainer(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
-	return r.b.observeImageEvidence(ctx, r.b.cfg, observed, core.LeaseClaim{})
+	// Repository digests describe the configured base; the container records the
+	// actual runtime image. Only this runtime's prepared ID maps to its base.
+	runtimeID := observed.Image
+	r.imageMu.RLock()
+	if r.preparedImageID != "" && runtimeID == r.preparedImageID {
+		observed.Image = r.baseImageID
+	}
+	r.imageMu.RUnlock()
+	evidence, err := r.b.observeImageEvidence(ctx, r.b.cfg, observed, core.LeaseClaim{})
+	if err == nil {
+		evidence.ConfiguredReference = r.Image()
+		evidence.RuntimeImageID = runtimeID
+	}
+	return evidence, err
 }
 
 func ServedReadyCheck() string {
