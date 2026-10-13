@@ -59923,6 +59923,501 @@ describe("maximum lifetime safety net", () => {
     expect(f.storage.value<LeaseRecord>(`lease:${legacy.id}`)!.lifetimePolicy).toBeUndefined();
   });
 
+  it.each(
+    (["readiness", "stop", "retention"] as const).flatMap((phase) =>
+      (["api", "portal"] as const).map((surface) => ({ phase, surface })),
+    ),
+  )(
+    "rejects $surface deletion during a lifetime $phase claim and accepts a later retry",
+    async ({ phase, surface }) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      const f = fixture();
+      f.lease.owner = "alice@example.com";
+      f.lease.org = orgKeyForLabel("example-org");
+      f.lease.state = "active";
+      f.lease.createdAt = new Date(now).toISOString();
+      f.lease.expiresAt = new Date(now + 3_600_000).toISOString();
+      delete f.lease.releaseDeletesServer;
+      if (phase === "readiness") delete f.lease.lifetimePolicy!.readiness;
+      const started = deferred<void>();
+      const finish = deferred<void>();
+      const checkLifetimeReadiness = vi.fn<() => Promise<string>>(async () => {
+        started.resolve();
+        await finish.promise;
+        return f.identity;
+      });
+      f.retainLease.mockImplementation(async (_lease, context) => {
+        if (phase === "retention") await context.saveIdentity(f.identity);
+        started.resolve();
+        await finish.promise;
+        if (phase !== "retention") await context.saveIdentity(f.identity);
+        await context.assertOwner();
+        return { stopped: true, identity: f.identity };
+      });
+      const fleet = testFleet(
+        f.storage,
+        {
+          aws: { checkLifetimeReadiness, retainLease: f.retainLease, releaseLease: f.releaseLease },
+        },
+        env,
+      );
+      await f.storage.put(`lease:${f.lease.id}`, f.lease);
+      const alarm = fleet.alarm();
+      await started.promise;
+      const release = () =>
+        fleet.fetch(
+          request("POST", `/${surface === "api" ? "v1" : "portal"}/leases/${f.lease.id}/release`, {
+            headers: { "x-crabbox-owner": f.lease.owner, "x-crabbox-org": "example-org" },
+            body: { delete: true },
+          }),
+        );
+      const conflict = await release();
+      // Always let provider work drain, including when the regression assertion fails.
+      finish.resolve();
+      await alarm;
+      expect(conflict.status).toBe(409);
+      expect(await conflict.text()).toContain(
+        surface === "api" ? "cleanup_in_progress" : "Cleanup in progress",
+      );
+      expect(f.releaseLease).not.toHaveBeenCalled();
+      expect((await release()).status).toBe(surface === "api" ? 200 : 303);
+      await fleet.alarm();
+      expect(f.releaseLease).toHaveBeenCalledOnce();
+      expect(f.storage.value<LeaseRecord>(`lease:${f.lease.id}`)?.cleanupCompletedAt).toBeDefined();
+    },
+  );
+
+  it.each([false, true])(
+    "rechecks concurrent cleanup intent after release authorization (deleting=%s)",
+    async (deleting) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      const f = fixture();
+      f.lease.owner = "alice@example.com";
+      f.lease.org = orgKeyForLabel("example-org");
+      await f.storage.put(`lease:${f.lease.id}`, f.lease);
+      const claimed = {
+        ...f.lease,
+        releaseDeletesServer: deleting,
+        cleanupStartedAt: new Date(now).toISOString(),
+        cleanupClaimExpiresAt: new Date(now + 60_000).toISOString(),
+      };
+      f.storage.afterGet = async (key) => {
+        if (key !== `lease:${f.lease.id}`) return;
+        f.storage.afterGet = undefined;
+        await f.storage.put(key, claimed);
+      };
+      const response = await f.fleet.fetch(
+        request("POST", `/v1/leases/${f.lease.id}/release`, {
+          headers: { "x-crabbox-owner": f.lease.owner, "x-crabbox-org": "example-org" },
+          body: { delete: true },
+        }),
+      );
+      expect(response.status).toBe(deleting ? 200 : 409);
+      await expect(response.json()).resolves.toMatchObject(
+        deleting ? { lease: { id: f.lease.id } } : { error: "cleanup_in_progress" },
+      );
+      expect(f.storage.value<LeaseRecord>(`lease:${f.lease.id}`)).toEqual(claimed);
+      expect(f.releaseLease).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: "coincident deadlines", expires: now, ready: true },
+    { name: "delayed maintenance", expires: now - 60_000, ready: true },
+    { name: "pending readiness", expires: now, ready: false },
+  ])(
+    "lets ordinary TTL deletion win over lifetime retention: $name",
+    async ({ expires, ready }) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      const f = fixture();
+      f.lease.state = "active";
+      f.lease.expiresAt = new Date(expires).toISOString();
+      f.lease.lifetimePolicy!.deadlineAt = new Date(expires).toISOString();
+      delete f.lease.releaseDeletesServer;
+      if (!ready) delete f.lease.lifetimePolicy!.readiness;
+      const checkLifetimeReadiness = vi.fn<() => Promise<string>>(async () => f.identity);
+      const fleet = testFleet(
+        f.storage,
+        {
+          aws: { checkLifetimeReadiness, retainLease: f.retainLease, releaseLease: f.releaseLease },
+        },
+        env,
+      );
+      await f.storage.put(`lease:${f.lease.id}`, f.lease);
+      await fleet.alarm();
+      expect(f.retainLease).not.toHaveBeenCalled();
+      expect(checkLifetimeReadiness).not.toHaveBeenCalled();
+      expect(f.releaseLease).toHaveBeenCalledOnce();
+      const expired = f.storage.value<LeaseRecord>(`lease:${f.lease.id}`)!;
+      expect(expired.state).toBe("expired");
+      expect(expired.cleanupCompletedAt).toBeDefined();
+      expect(expired.lifetimePolicy?.retainedIdentity).toBeUndefined();
+    },
+  );
+
+  it("preserves TTL deletion when expiry arrives during lifetime provider reads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const f = fixture();
+    f.lease.state = "active";
+    f.lease.expiresAt = new Date(now + 1_000).toISOString();
+    delete f.lease.releaseDeletesServer;
+    f.retainLease.mockImplementation(async (_lease, context) => {
+      vi.setSystemTime(now + 1_000);
+      await context.saveIdentity(f.identity);
+      return { stopped: true, identity: f.identity };
+    });
+    await f.storage.put(`lease:${f.lease.id}`, f.lease);
+    await f.fleet.alarm();
+    expect(f.releaseLease).toHaveBeenCalledOnce();
+    const expired = f.storage.value<LeaseRecord>(`lease:${f.lease.id}`)!;
+    expect(expired.state).toBe("expired");
+    expect(expired.lifetimePolicy?.retainedIdentity).toBeUndefined();
+    expect(expired.cleanupCompletedAt).toBeDefined();
+  });
+
+  it("reconciles shared AWS ingress after lifetime deletion while preserving surviving access", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const f = fixture();
+    f.lease.network = { sshSourceCIDRs: ["198.51.100.10/32"], awsSecurityGroupID: "sg-shared" };
+    const sibling = {
+      ...f.lease,
+      id: "cbx_000000000001",
+      cloudID: "i-0fedcba9876543210",
+      lifetimePolicy: undefined,
+      network: { ...f.lease.network, sshSourceCIDRs: ["198.51.100.20/32"] },
+    };
+    const reconcileLeaseAccess = vi.fn<AWSProvider["reconcileLeaseAccess"]>(async () => {});
+    const fleet = testFleet(
+      f.storage,
+      { aws: { retainLease: f.retainLease, releaseLease: f.releaseLease, reconcileLeaseAccess } },
+      env,
+    );
+    await f.storage.put(`lease:${f.lease.id}`, f.lease);
+    await f.storage.put(`lease:${sibling.id}`, sibling);
+    await fleet.alarm();
+    expect(reconcileLeaseAccess).not.toHaveBeenCalled();
+    vi.setSystemTime(now + 7 * 86_400_000);
+    await fleet.alarm();
+    expect(f.releaseLease).toHaveBeenCalledOnce();
+    expect(reconcileLeaseAccess).toHaveBeenCalledOnce();
+    expect(reconcileLeaseAccess.mock.calls[0]![1].activeLeases.map((lease) => lease.id)).toEqual([
+      sibling.id,
+    ]);
+    expect(f.storage.value("aws-ingress-reconcile:pending")).toBeUndefined();
+    expect(f.storage.value<LeaseRecord>(`lease:${sibling.id}`)).toEqual(sibling);
+  });
+
+  it.each([
+    { phase: "active", retry: "none" },
+    { phase: "retained", retry: "none" },
+    { phase: "retained", retry: "revoked" },
+    { phase: "retained", retry: "reassigned" },
+  ] as const)(
+    "upgrades v0.75.0 $phase records through EC2 ingress (retry=$retry)",
+    async ({ phase, retry }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now);
+      // Synthetic persisted v0.75.0 shape, checked against producer 3f3606fc:
+      // no current create/default-policy helper, migration, or live AWS credentials.
+      const lease: LeaseRecord = {
+        id: "cbx_abcdef123456",
+        slug: "stored-lifetime",
+        provider: "aws",
+        target: "linux",
+        cloudID: "i-0123456789abcdef0",
+        region: "eu-west-1",
+        providerScope: "aws:account:123456789012",
+        owner: "alice@example.com",
+        org: "~1.ZXhhbXBsZS1vcmc",
+        profile: "default",
+        class: "tiny",
+        serverType: "t3.small",
+        providerKey: "shared-key",
+        host: "",
+        sshUser: "crabbox",
+        sshPort: "22",
+        sshFallbackPorts: [],
+        workRoot: "/work/crabbox",
+        keep: true,
+        ttlSeconds: 3600,
+        idleTimeoutSeconds: 3600,
+        estimatedHourlyUSD: 1,
+        maxEstimatedUSD: 1,
+        createdAt: "2026-10-02T00:00:00.000Z",
+        updatedAt: "2026-10-03T00:00:00.000Z",
+        expiresAt: "2026-10-02T01:00:00.000Z",
+        releasedAt: "2026-10-03T00:00:00.000Z",
+        state: "released",
+        releaseDeletesServer: false,
+        network: {
+          awsSecurityGroupID: "sg-shared",
+          sshSourceCIDRs: ["198.51.100.10/32"],
+          sshSourceCIDRsComplete: true,
+        },
+        lifetimePolicy: {
+          mode: "enforce",
+          workload: "batch",
+          deadlineAt: "2026-10-03T00:00:00.000Z",
+          retainSeconds: 604800,
+          status: "retained",
+          stoppedAt: "2026-10-03T00:00:00.000Z",
+          stopStartedAt: "2026-10-03T00:00:00.000Z",
+          deleteAfterAt: "2026-10-10T00:00:00.000Z",
+          retainedIdentity: "i-0123456789abcdef0:vol-0123456789abcdef0:/dev/sda1",
+          readiness: {
+            status: "ready",
+            checkedAt: "2026-10-02T00:00:00.000Z",
+            identity: "i-0123456789abcdef0:vol-0123456789abcdef0:/dev/sda1",
+          },
+        },
+      };
+      const sibling: LeaseRecord = {
+        ...lease,
+        id: "cbx_abcdef123457",
+        cloudID: "i-0123456789abcdef1",
+        slug: "surviving",
+        host: "192.0.2.20",
+        state: "active",
+        releaseDeletesServer: undefined,
+        createdAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 3_600_000).toISOString(),
+        releasedAt: undefined,
+        lifetimePolicy: undefined,
+        network: { ...lease.network, sshSourceCIDRs: ["198.51.100.20/32"] },
+      };
+      const legacy: LeaseRecord = {
+        ...sibling,
+        id: "cbx_abcdef123458",
+        cloudID: "i-0123456789abcdef2",
+        slug: "legacy-kept",
+        state: "released",
+        releaseDeletesServer: false,
+        network: { ...lease.network, sshSourceCIDRs: ["198.51.100.30/32"] },
+      };
+      if (phase === "active") {
+        lease.state = "active";
+        lease.host = "192.0.2.10";
+        lease.createdAt = new Date(now - 3_600_000).toISOString();
+        lease.expiresAt = new Date(now).toISOString();
+        delete lease.releasedAt;
+        delete lease.releaseDeletesServer;
+        lease.lifetimePolicy = {
+          mode: "enforce",
+          workload: "batch",
+          deadlineAt: new Date(now).toISOString(),
+          retainSeconds: 604800,
+          readiness: lease.lifetimePolicy!.readiness,
+        };
+      }
+      // JSON round-trip is the storage boundary. Persist old index memberships too.
+      const records = [lease, sibling, legacy].map(
+        (record) => JSON.parse(JSON.stringify(record)) as LeaseRecord,
+      );
+      let storage = new MemoryStorage(
+        new Map(
+          records.flatMap(
+            (record) =>
+              [
+                [`lease:${record.id}`, record],
+                [`lease-maintenance:${record.id}`, 1],
+                [`lease-current:${record.id}`, 1],
+              ] as Array<[string, unknown]>,
+          ),
+        ),
+      );
+      const originalPolicy = structuredClone(lease.lifetimePolicy!);
+      const rules = new Map([
+        ["198.51.100.10/32", "Crabbox SSH"],
+        ["198.51.100.20/32", "Crabbox SSH"],
+        ["198.51.100.30/32", "Crabbox SSH"],
+        ["198.51.100.99/32", "operator-managed"],
+      ]);
+      const calls: Array<{ action: string; cidr: string | null; instance: string | null }> = [];
+      let terminated = false;
+      let instanceState = phase === "active" ? "running" : "stopped";
+      let failedRevoke = false;
+      /* oxlint-disable vitest/no-conditional-expect -- validate each actual AWS command at its HTTP dispatch boundary. */
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const incoming = input instanceof Request ? input : new Request(input, init);
+        expect(new URL(incoming.url).hostname).toMatch(/^(ec2|sts)\.eu-west-1\.amazonaws\.com$/);
+        expect(incoming.headers.get("authorization")).toContain("Credential=test/");
+        const params = new URLSearchParams(await incoming.text());
+        const action = params.get("Action")!;
+        const cidr = params.get("IpPermissions.1.IpRanges.1.CidrIp");
+        calls.push({ action, cidr, instance: params.get("InstanceId.1") });
+        if (action === "GetCallerIdentity") return awsIdentityResponse("123456789012");
+        if (action === "DescribeInstances") {
+          expect(params.get("InstanceId.1")).toBe(lease.cloudID);
+          if (terminated) return awsEmptyDescribeInstancesResponse();
+          return ec2XMLResponse(`<DescribeInstancesResponse><requestId>req-lifetime</requestId><reservationSet><item><instancesSet><item>
+            <instanceId>${lease.cloudID}</instanceId><instanceType>t3.small</instanceType>
+            <instanceState><name>${instanceState}</name></instanceState>
+            <rootDeviceType>ebs</rootDeviceType><rootDeviceName>/dev/sda1</rootDeviceName>
+            <tagSet>${Object.entries({
+              crabbox: "true",
+              created_by: "crabbox",
+              lease: lease.id,
+              owner: "alice_example.com",
+              provider: "aws",
+              slug: lease.slug!,
+            })
+              .map(([key, value]) => `<item><key>${key}</key><value>${value}</value></item>`)
+              .join("")}</tagSet>
+            <blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><volumeId>vol-0123456789abcdef0</volumeId><deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping>
+            </item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
+        }
+        if (action === "DescribeInstanceTypes")
+          return ec2XMLResponse(
+            "<DescribeInstanceTypesResponse><instanceTypeSet><item><instanceType>t3.small</instanceType><instanceStorageSupported>false</instanceStorageSupported></item></instanceTypeSet></DescribeInstanceTypesResponse>",
+          );
+        if (action === "DescribeVolumes") {
+          expect(params.get("VolumeId.1")).toBe("vol-0123456789abcdef0");
+          return terminated
+            ? ec2XMLResponse(
+                "<Response><Errors><Error><Code>InvalidVolume.NotFound</Code></Error></Errors></Response>",
+                400,
+              )
+            : ec2XMLResponse(
+                `<DescribeVolumesResponse><volumeSet><item><volumeId>vol-0123456789abcdef0</volumeId><tagSet><item><key>lease</key><value>${lease.id}</value></item></tagSet><attachmentSet><item><instanceId>${lease.cloudID}</instanceId><device>/dev/sda1</device><status>attached</status></item></attachmentSet></item></volumeSet></DescribeVolumesResponse>`,
+              );
+        }
+        if (action === "StopInstances") {
+          expect(params.get("InstanceId.1")).toBe(lease.cloudID);
+          instanceState = "stopped";
+          return ec2XMLResponse(
+            `<StopInstancesResponse><instancesSet><item><instanceId>${lease.cloudID}</instanceId></item></instancesSet></StopInstancesResponse>`,
+          );
+        }
+        if (action === "TerminateInstances") {
+          expect(params.get("InstanceId.1")).toBe(lease.cloudID);
+          terminated = true;
+          return ec2XMLResponse(
+            `<TerminateInstancesResponse><instancesSet><item><instanceId>${lease.cloudID}</instanceId></item></instancesSet></TerminateInstancesResponse>`,
+          );
+        }
+        if (action === "DescribeSecurityGroups") {
+          expect(params.get("GroupId.1")).toBe("sg-shared");
+          return ec2XMLResponse(
+            `<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-shared</groupId><ipPermissions><item><ipProtocol>tcp</ipProtocol><fromPort>22</fromPort><toPort>22</toPort><ipRanges>${[...rules].map(([ip, description]) => `<item><cidrIp>${ip}</cidrIp><description>${description}</description></item>`).join("")}</ipRanges></item></ipPermissions></item></securityGroupInfo></DescribeSecurityGroupsResponse>`,
+          );
+        }
+        if (action === "AuthorizeSecurityGroupIngress" || action === "RevokeSecurityGroupIngress") {
+          expect(params.get("GroupId")).toBe("sg-shared");
+          expect(params.get("IpPermissions.1.FromPort")).toBe("22");
+          expect(params.get("IpPermissions.1.ToPort")).toBe("22");
+          expect(cidr).not.toBeNull();
+          if (action === "RevokeSecurityGroupIngress") {
+            if (retry !== "none" && !failedRevoke) {
+              failedRevoke = true;
+              return ec2XMLResponse(
+                "<Response><Errors><Error><Code>UnauthorizedOperation</Code><Message>synthetic revocation failure</Message></Error></Errors></Response>",
+                403,
+              );
+            }
+            rules.delete(cidr!);
+          } else rules.set(cidr!, "Crabbox SSH");
+          return ec2XMLResponse(`<${action}Response />`);
+        }
+        throw new Error(`unexpected AWS operation ${action}`);
+      });
+      /* oxlint-enable vitest/no-conditional-expect */
+      const offlineEnv = {
+        ...env,
+        CRABBOX_RETAINED_RECONCILE: "off",
+        AWS_ACCESS_KEY_ID: "test",
+        AWS_SECRET_ACCESS_KEY: "test",
+      };
+      let fleet = testFleet(storage, {}, offlineEnv); // Production coordinator and AWSProvider/EC2SpotClient.
+      await fleet.alarm();
+      expect(terminated).toBe(true);
+      expect(calls.filter(({ action }) => action === "TerminateInstances")).toEqual([
+        { action: "TerminateInstances", instance: lease.cloudID, cidr: null },
+      ]);
+      const completed = storage.value<LeaseRecord>(`lease:${lease.id}`)!;
+      expect(completed.cleanupCompletedAt).toBeDefined();
+      expect(completed).toMatchObject({
+        providerScope: lease.providerScope,
+        cloudID: lease.cloudID,
+        region: lease.region,
+      });
+      expect(completed.lifetimePolicy).toMatchObject({
+        deadlineAt: originalPolicy.deadlineAt,
+        retainSeconds: originalPolicy.retainSeconds,
+      });
+      /* oxlint-disable vitest/no-conditional-expect -- the explicit table cases have different retained-state and durable-retry contracts. */
+      if (phase === "retained")
+        expect(completed.lifetimePolicy).toMatchObject({
+          status: "complete",
+          retainedIdentity: originalPolicy.retainedIdentity,
+          deleteAfterAt: originalPolicy.deleteAfterAt,
+        });
+      else expect(completed.state).toBe("expired");
+      const pendingKey = "aws-ingress-reconcile:pending";
+      let changed = records[1]!;
+      if (retry !== "none") {
+        const pending = storage.value<{
+          targets: Array<{ attempts: number; retryAt: string; anchor: LeaseRecord }>;
+        }>(pendingKey)!;
+        expect(pending).toBeDefined();
+        expect(pending.targets).toHaveLength(1);
+        expect(pending.targets[0]).toMatchObject({ attempts: 1, anchor: { id: lease.id } });
+        expect(rules.has("198.51.100.10/32")).toBe(true);
+        // Restart from serialized durable state, then model a concurrently committed
+        // access change via the production record/index writer, before the queued retry.
+        storage = new MemoryStorage(
+          new Map(JSON.parse(JSON.stringify([...(await storage.list())]))),
+        );
+        changed =
+          retry === "revoked"
+            ? {
+                ...changed,
+                state: "released",
+                releaseDeletesServer: true,
+                cleanupCompletedAt: new Date(now).toISOString(),
+              }
+            : {
+                ...changed,
+                owner: "bob@example.com",
+                network: { ...changed.network, sshSourceCIDRs: ["198.51.100.40/32"] },
+              };
+        await putLeaseRecord(storage, changed);
+        fleet = testFleet(storage, {}, offlineEnv);
+        vi.setSystemTime(Date.parse(pending.targets[0]!.retryAt));
+        await fleet.alarm();
+      }
+      /* oxlint-enable vitest/no-conditional-expect */
+      expect(storage.value(pendingKey)).toBeUndefined();
+      const expected = ["198.51.100.30/32", "198.51.100.99/32"];
+      if (retry === "reassigned") expected.push("198.51.100.40/32");
+      else if (retry === "none") expected.push("198.51.100.20/32");
+      expect([...rules.keys()].toSorted()).toEqual(expected.toSorted());
+      expect(
+        calls.some(
+          ({ action, cidr }) =>
+            action === "RevokeSecurityGroupIngress" && cidr === "198.51.100.10/32",
+        ),
+      ).toBe(true);
+      expect(
+        calls.some(
+          ({ action, cidr }) =>
+            action === "RevokeSecurityGroupIngress" &&
+            ["198.51.100.30/32", "198.51.100.99/32"].includes(cidr!),
+        ),
+      ).toBe(false);
+      expect(calls.filter(({ action }) => action === "TerminateInstances")).toHaveLength(1);
+      expect(storage.value<LeaseRecord>(`lease:${sibling.id}`)).toEqual(changed);
+      expect(storage.value<LeaseRecord>(`lease:${legacy.id}`)).toEqual(records[2]);
+      expect(storage.value<LeaseRecord>(`lease:${legacy.id}`)?.lifetimePolicy).toBeUndefined();
+      expect(calls.some(({ action }) => action === "StopInstances")).toBe(false);
+    },
+  );
+
   it("persists identity before stop and deletes only after confirmed seven-day retention", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
