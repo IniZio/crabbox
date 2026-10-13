@@ -10,6 +10,8 @@
 
 ### Changed
 
+- CLI: add `stop --wait=false` for coordinator-owned queued cleanup while preserving pending local recovery state; ordinary stop still waits for confirmed deletion.
+- CLI: batch no-sync SSH workspace preparation and script upload, overlap independent telemetry and event delivery, and preserve retained scripts and terminal run records.
 - Coordinator: restore the deployment-authorized owner's 24-hour lease maximum while retaining the global 4-hour limit; deployments refuse to overwrite other live lifetime-policy overrides. [PR 2816](https://github.com/openclaw/crabbox/pull/2816).
 - CI: run CLI coverage in three isolated shards, retaining atomic whole-suite coverage and the 90% core gate; report the slowest top-level tests without summing nested timings.
 - Coordinator monthly reserved-USD budgets are raised to $100,000 fleet-wide, $50,000 per owner and $100,000 per org; reservations from finished leases had exhausted the per-owner cap at roughly a quarter of the estimated spend.
@@ -33,6 +35,7 @@
 
 ### Fixed
 
+- CLI: retain idempotent SSH retries for batched workspace preparation and script upload after transient transport failures.
 - AWS deployment smoke: pin Linux/amd64 `t3.small` with class `tiny` and On-Demand capacity so inherited defaults cannot launch a larger instance. [PR 2814](https://github.com/openclaw/crabbox/pull/2814).
 - Blacksmith Testbox: cancel the exact owned GitHub workflow after native stop leaves it active, releasing concurrency slots without waiting for the SSH idle timer; retain recovery state until both sides confirm completion. [PR 2813](https://github.com/openclaw/crabbox/pull/2813).
 - Direct lease extension refreshes file-backed guest expiry guards after saving provider labels; failed guest writes report both deadlines and can be retried without adding lifetime twice. ([#2804](https://github.com/openclaw/crabbox/pull/2804))

@@ -2933,20 +2933,42 @@ afterSync:
 		}
 		exitNodeEgressChecked = true
 	}
-	recorder.CaptureTelemetryStart(ctx, target)
-	recorder.StartTelemetrySampler(ctx, target)
+	// The baseline sample and workspace preparation are independent; join before execution.
+	telemetryReady := make(chan struct{})
+	go func(sampleCtx context.Context, sampleTarget SSHTarget) {
+		recorder.CaptureTelemetryStart(sampleCtx, sampleTarget)
+		close(telemetryReady)
+	}(ctx, target)
+	defer func() { <-telemetryReady }()
+	scriptUploaded := false
 	if *noSync {
 		mkdirCommand := remoteMkdir(workdir)
 		if isWindowsNativeTarget(target) {
 			mkdirCommand = windowsRemoteMkdir(workdir)
 		}
-		if _, err := runIdempotentSSHCombinedOutput(ctx, target, mkdirCommand, idempotentSSHRetryDelay); err != nil {
-			return recordFailure(Exit(7, "create remote workdir: %v", err))
+		// Keep preparation and upload under one witness and one SSH round trip.
+		// Native Windows retains its separate PowerShell invocations.
+		if !isWindowsNativeTarget(target) {
+			mkdirCommand += " && " + remoteInvalidateSyncFingerprintForTarget(target, workdir, plainManifestMode)
 		}
-		if _, err := runIdempotentSSHCombinedOutput(ctx, target, remoteInvalidateSyncFingerprintForTarget(target, workdir, plainManifestMode), idempotentSSHRetryDelay); err != nil {
-			return recordFailure(Exit(7, "invalidate reusable sync fingerprint before execution: %v", err))
+		if script != nil && !isWindowsNativeTarget(target) && !*preflight && !expansion.Profile.Doctor.Enabled && len(envSelection.Profile) == 0 {
+			if err := uploadRunScriptAfter(ctx, target, workdir, script, mkdirCommand); err != nil {
+				return recordFailure(err)
+			}
+			scriptUploaded = true
+		} else {
+			if _, err := runIdempotentSSHCombinedOutput(ctx, target, mkdirCommand, idempotentSSHRetryDelay); err != nil {
+				return recordFailure(Exit(7, "prepare remote workdir: %v", err))
+			}
+		}
+		if isWindowsNativeTarget(target) {
+			if _, err := runIdempotentSSHCombinedOutput(ctx, target, remoteInvalidateSyncFingerprintForTarget(target, workdir, plainManifestMode), idempotentSSHRetryDelay); err != nil {
+				return recordFailure(Exit(7, "invalidate reusable sync fingerprint before execution: %v", err))
+			}
 		}
 	}
+	<-telemetryReady
+	recorder.StartTelemetrySampler(ctx, target)
 	if err := preflightRawJSRuntime(target); err != nil {
 		return recordFailure(err)
 	}
@@ -3020,8 +3042,10 @@ afterSync:
 	commandDisplay := runCommandDisplayWithLiteralArgs(command, *shellMode, expansion.LiteralArgs)
 	if script != nil {
 		script = runScriptForTarget(script, target)
-		if err := uploadRunScript(ctx, target, workdir, script); err != nil {
-			return recordFailure(err)
+		if !scriptUploaded {
+			if err := uploadRunScript(ctx, target, workdir, script); err != nil {
+				return recordFailure(err)
+			}
 		}
 		fmt.Fprintf(a.Stderr, "uploaded script %s -> %s\n", script.Source, script.RemotePath)
 		recorder.Event("script.uploaded", "script", script.RemotePath)
@@ -5153,6 +5177,7 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 	reclaim := fs.Bool("reclaim", false, "adopt an unclaimed provider resource before stopping it")
 	forceRecovery := fs.Bool("force", false, "recover and stop one exactly identified provider resource")
 	currentRepo := fs.Bool("current-repo", false, "stop a fixed-ID lease only while its claim belongs to the current repository")
+	wait := fs.Bool("wait", true, "wait for coordinator provider cleanup to complete")
 	expectedLeaseID := fs.String("expected-provider-lease-id", "", "internal: immutable provider lease identity")
 	expectedAttemptLeaseID := fs.String("expected-provider-attempt-lease-id", "", "internal: immutable provider attempt identity")
 	expectedSlug := fs.String("expected-provider-slug", "", "internal: immutable provider slug identity")
@@ -5311,6 +5336,9 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 	if err != nil {
 		return err
 	}
+	if !*wait && (backendCoordinator(backend) == nil || *currentRepo || *confirmedAbsentLocalCleanup) {
+		return Exit(2, "--wait=false requires an ordinary coordinator-backed stop")
+	}
 	if *currentRepo {
 		scoped, ok := backend.(RepositoryScopedStopBackend)
 		if !ok {
@@ -5426,9 +5454,10 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 		a.cleanupBackendLeaseLocalConnectionsBestEffort(ctx, *id, lease.LeaseID)
 	}
 	request := ReleaseLeaseRequest{
-		Lease:                    lease,
-		Force:                    true,
-		ExpectedProviderIdentity: expectedIdentity,
+		Lease:                           lease,
+		Force:                           true,
+		ExpectedProviderIdentity:        expectedIdentity,
+		DeferProviderCleanupObservation: !*wait,
 	}
 	if !connectionCleanupSafe {
 		request.GuardedRemoteCleanup = a.cleanupBackendLeaseRemoteConnectionsBestEffort
@@ -5444,6 +5473,10 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 	}
 	if outcome.ForgottenLocally {
 		fmt.Fprintf(a.Stderr, "lease=%s forgotten locally (resource absent)\n", lease.LeaseID)
+		return nil
+	}
+	if !*wait && !outcome.Terminal {
+		fmt.Fprintf(a.Stderr, "release accepted lease=%s; coordinator cleanup continues; retry stop --wait to confirm completion\n", lease.LeaseID)
 		return nil
 	}
 	if !connectionCleanupSafe {
