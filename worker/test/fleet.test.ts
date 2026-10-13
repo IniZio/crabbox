@@ -890,7 +890,7 @@ describe("terminal budget settlement", () => {
           storage.value<LeaseRecord>(`lease:${lease.id}`)!,
           new Date(),
         );
-        return usage.reservedUSD;
+        return usage.committedUSD;
       };
       expect(budget()).toBe(0.2);
       await fleet.alarm();
@@ -964,7 +964,8 @@ describe("terminal budget settlement", () => {
               activeLeases: 0,
               runtimeSeconds: kind === "cloud-gone" ? 720 : 0,
               estimatedUSD: kind === "cloud-gone" ? 0.2 : 0,
-              reservedUSD: kind === "cloud-gone" ? 0.2 : 0,
+              reservedUSD: 1.5,
+              committedUSD: kind === "cloud-gone" ? 0.2 : 0,
             },
           });
           vi.setSystemTime(new Date("2026-05-21T00:00:00Z"));
@@ -1003,15 +1004,15 @@ describe("terminal budget settlement", () => {
         return usage;
       };
       await fleet.alarm();
-      expect(budget()).toMatchObject({ activeLeases: 1, reservedUSD: 1.5 });
+      expect(budget()).toMatchObject({ activeLeases: 1, committedUSD: 1.5 });
       vi.setSystemTime(new Date("2026-06-01T00:20:00Z"));
       await fleet.alarm();
       const settled = structuredClone(storage.value<LeaseRecord>(`lease:${lease.id}`)!);
       expect(settled.state).toBe("expired");
-      expect(budget()).toMatchObject({ activeLeases: 0, reservedUSD: 0 });
+      expect(budget()).toMatchObject({ activeLeases: 0, committedUSD: 0 });
       const mayUsage = createCostLimitUsage(lease, new Date("2026-05-31T23:59:00Z"));
       addLeaseToCostLimitUsage(mayUsage, settled, new Date());
-      expect(mayUsage.reservedUSD).toBe(0.5);
+      expect(mayUsage.committedUSD).toBe(0.5);
       vi.setSystemTime(new Date("2026-06-02T00:20:00Z"));
       await fleet.alarm();
       expect(storage.value<LeaseRecord>(`lease:${lease.id}`)?.endedAt).toBe(settled.endedAt);
@@ -32723,6 +32724,66 @@ describe("fleet lease identity and idle", () => {
     expect(report.limits).not.toHaveProperty("sharedCapacityOverrideOwners");
   });
 
+  it.each([
+    "CRABBOX_MAX_MONTHLY_USD",
+    "CRABBOX_MAX_MONTHLY_USD_PER_OWNER",
+    "CRABBOX_MAX_MONTHLY_USD_PER_ORG",
+  ] as const)("admits a previously refused lease after settlement under %s", async (budget) => {
+    const storage = new MemoryStorage();
+    const now = Date.now();
+    const oldID = "cbx_aaaabbbbcccc";
+    const newID = "cbx_ddddeeeeffff";
+    const headers = { "x-crabbox-owner": "alice@example.com", "x-crabbox-org": "example-org" };
+    const env = { [budget]: "5", CRABBOX_COST_RATES_JSON: '{"hetzner:cpx62":2}' };
+    let creates = 0;
+    const providers = { hetzner: fakeProvider(() => creates++) };
+    const fleet = testFleet(storage, providers, env);
+    storage.seed(
+      `lease:${oldID}`,
+      testLease({
+        id: oldID,
+        owner: "alice@example.com",
+        org: "example-org",
+        keep: false,
+        createdAt: new Date(now - 3600000).toISOString(),
+        expiresAt: new Date(now + 3600000).toISOString(),
+        estimatedHourlyUSD: 1,
+        maxEstimatedUSD: 10,
+      }),
+    );
+    const body = {
+      leaseID: newID,
+      createAttemptID: "cat_0123456789abcdef0123456789abcdef",
+      provider: "hetzner",
+      class: "standard",
+      serverType: "cpx62",
+      ttlSeconds: 3600,
+      sshPublicKey: "ssh-ed25519 synthetic",
+    };
+    const refused = await fleet.fetch(request("POST", "/v1/leases", { headers, body }));
+    expect(refused.status).toBe(429);
+    await expect(refused.json()).resolves.toMatchObject({ error: "cost_limit_exceeded" });
+    expect(creates).toBe(0);
+    expect(storage.value(`lease:${newID}`)).toBeUndefined();
+
+    const released = await fleet.fetch(
+      request("POST", `/v1/leases/${oldID}/release`, { headers, body: { delete: true } }),
+    );
+    expect(released.status).toBe(200);
+    const reopened = testFleet(
+      new MemoryStorage(structuredClone(await storage.list())),
+      providers,
+      env,
+    );
+    const usage = await reopened.fetch(request("GET", "/v1/usage", { headers }));
+    await expect(usage.json()).resolves.toMatchObject({
+      usage: { activeLeases: 0, reservedUSD: 10, committedUSD: 1 },
+    });
+    const accepted = await reopened.fetch(request("POST", "/v1/leases", { headers, body }));
+    expect(accepted.status).toBe(201);
+    expect(creates).toBe(1);
+  });
+
   it("counts in-flight provider access reservations against active lease limits", async () => {
     const storage = new MemoryStorage();
     const fleet = testFleet(
@@ -32850,7 +32911,7 @@ describe("fleet lease identity and idle", () => {
     expect(reopenedStorage.value(`lease:${leaseID}`)).toBeUndefined();
     const reopenedUsage = await reopened.fetch(request("GET", "/v1/usage", { headers }));
     await expect(reopenedUsage.json()).resolves.toMatchObject({
-      usage: { leases: 1, activeLeases: 0, reservedUSD: 0 },
+      usage: { leases: 1, activeLeases: 0, reservedUSD: 1, committedUSD: 0 },
     });
     const fresh = await reopened.fetch(
       request("PUT", "/v1/leases/cbx_ca1100000042", { headers, body }),
