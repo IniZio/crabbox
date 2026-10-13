@@ -30760,7 +30760,9 @@ export class AWSProvider implements CloudProvider {
       }
       return { ...config, awsAMI: "", awsPromotedAMIs };
     }
-    const promoted = await this.promotedImage(config);
+    const candidate = await this.promotedImage(config);
+    // Legacy promotion aliases can point elsewhere; they must not redirect the lease.
+    const promoted = candidate?.region === config.awsRegion ? candidate : undefined;
     const prepared = {
       ...config,
       awsAMI: promoted?.id ?? "",
@@ -30777,7 +30779,6 @@ export class AWSProvider implements CloudProvider {
             },
           }
         : {}),
-      ...(promoted?.region ? { awsRegion: promoted.region } : {}),
     };
     return { ...prepared, awsPromotedAMIs: await this.promotedImagesForFallback(prepared) };
   }
