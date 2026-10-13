@@ -347,6 +347,13 @@ CRABBOX_DEPLOY_SMOKE_URLS="https://$BROKER_HOST/v1/health" \
   scripts/deploy-worker-smoke.sh
 ```
 
+The AWS smoke pins Linux/amd64, class `tiny`, and On-Demand `t3.small` (2 vCPU,
+2 GiB), the smallest instance in Crabbox's supported AWS amd64 class catalog.
+Both warmup and run override inherited target, architecture, and machine sizing.
+The smoke fails if that exact type is unavailable;
+it does not fall back to a larger instance. The smoke runs without repository sync
+and attempts to stop its lease after the command or on failure, with a 20-minute TTL as a backstop.
+
 ### Node.js And PostgreSQL
 
 Requirements: Node.js 22.12+, PostgreSQL 13+, one always-on service replica, and
