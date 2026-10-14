@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Coordinator: remove per-owner lease lifetime overrides from the production configuration; every owner uses the global lease policy, and the deploy guard now protects the complete live override document generically. [PR 2830](https://github.com/openclaw/crabbox/pull/2830).
+
 ### Fixed
 
 - CI: Go CLI race shards keep the restored Go build cache, so the race build's cache trim no longer deletes the non-race packages the one-time CLI test build reuses; that build drops from about 135 s to about 30 s per shard. [PR 2833](https://github.com/openclaw/crabbox/pull/2833).
