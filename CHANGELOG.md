@@ -16,6 +16,7 @@
 - CI: Go CLI race shards stream test events like the coverage shards, print only failed or unfinished test output, and end with listed and unlisted slow-test timings; the slow-test weights now come from those linux race timings. [PR 2832](https://github.com/openclaw/crabbox/pull/2832).
 - Release verification: retain attributable notarization errors after unrelated log floods, while bounding streamed records and sanitized diagnostics. [PR 2828](https://github.com/openclaw/crabbox/pull/2828).
 - Blacksmith Testbox: expose the configured Node and Go runtimes to native commands instead of using the runner image defaults. [PR 2818](https://github.com/openclaw/crabbox/pull/2818).
+- Blacksmith Testbox: report typed command causes and remaining cleanup budget when GitHub settlement fails, while keeping private error details out of CLI output. [PR 2835](https://github.com/openclaw/crabbox/pull/2835), thanks @vincentkoc.
 
 ## 0.77.0 - 2026-10-13
 
