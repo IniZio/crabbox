@@ -195,7 +195,7 @@ func (p protocolLease) target(cfg core.Config, keep bool) core.LeaseTarget {
 }
 
 // pinnedTarget converts a lease and applies the adapter's host-key pin, so every
-// acquire or resolve that carries ssh.hostKey replaces the previous pin.
+// acquire, resolve, or resume that carries ssh.hostKey replaces the previous pin.
 func (p protocolLease) pinnedTarget(cfg core.Config, keep bool) (core.LeaseTarget, error) {
 	lease := p.target(cfg, keep)
 	if lease.SSH.Host == "" {
