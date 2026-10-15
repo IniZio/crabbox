@@ -32,8 +32,19 @@ func (b *leaseBackend) pauseResume(ctx context.Context, op, done, id string) err
 	if err != nil {
 		return err
 	}
-	if _, err := b.invoke(ctx, protocolRequest{Operation: op, Lease: leaseForProtocol(lease)}); err != nil {
+	response, err := b.invoke(ctx, protocolRequest{Operation: op, Lease: leaseForProtocol(lease)})
+	if err != nil {
 		return err
+	}
+	// A resumed instance may have moved host, so a fresh host key replaces the pin.
+	if op == "resume" && response.Lease != nil {
+		resumed := *response.Lease
+		if resumed.LeaseID == "" {
+			resumed.LeaseID = lease.LeaseID
+		}
+		if _, err := resumed.pinnedTarget(b.cfg, true); err != nil {
+			return err
+		}
 	}
 	if b.rt.Stderr != nil {
 		fmt.Fprintf(b.rt.Stderr, "%s lease=%s\n", done, lease.LeaseID)
