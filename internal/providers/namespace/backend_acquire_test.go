@@ -3,6 +3,7 @@ package namespace
 import (
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"strings"
@@ -118,5 +119,51 @@ func TestCreateDevboxEgressDomains(t *testing.T) {
 				t.Fatalf("raw=%q missing %s: %s", tc.raw, d, runner.spec)
 			}
 		}
+	}
+}
+
+func TestAcquireCreatesDevboxWithClassMappedSize(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		class      string
+		classFlag  bool
+		configSize string
+		flagSize   string
+		want       string
+	}{
+		{name: "fast", class: "fast", classFlag: true, want: "size: m"},
+		{name: "large", class: "large", classFlag: true, want: "size: l"},
+		{name: "beast", class: "beast", classFlag: true, want: "size: xl"},
+		{name: "class beats configured size", class: "fast", classFlag: true, configSize: "S", want: "size: m"},
+		{name: "size flag beats class", class: "fast", classFlag: true, flagSize: "XL", want: "size: xl"},
+		{name: "configured size without class", configSize: "L", want: "size: l"},
+		{name: "default", want: "size: m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			cfg := core.Config{Provider: namespaceProvider, TargetOS: targetLinux, Architecture: "amd64", Class: tc.class}
+			cfg.Namespace.WorkRoot = "/workspaces/crabbox"
+			cfg.Namespace.Size = tc.configSize
+			if tc.classFlag {
+				core.MarkClassExplicit(&cfg)
+			}
+			if tc.flagSize != "" {
+				fs := flag.NewFlagSet("t", flag.ContinueOnError)
+				values := Provider{}.RegisterFlags(fs, cfg)
+				if err := fs.Parse([]string{"--namespace-size", tc.flagSize}); err != nil {
+					t.Fatal(err)
+				}
+				if err := (Provider{}).ApplyFlags(&cfg, fs, values); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := &specCaptureRunner{}
+			backend := &namespaceLeaseBackend{cfg: cfg, rt: core.Runtime{Stdout: io.Discard, Stderr: io.Discard, Exec: runner}}
+			_, _ = backend.Acquire(context.Background(), core.AcquireRequest{Repo: core.Repo{Root: t.TempDir()}})
+			if !strings.Contains(runner.spec, tc.want) {
+				t.Fatalf("create spec missing %q:\n%s", tc.want, runner.spec)
+			}
+		})
 	}
 }

@@ -49,18 +49,34 @@ func buildClassProfiles() []core.ProviderClassProfile {
 }
 
 func (Provider) ServerTypeForConfig(cfg core.Config) string {
-	if strings.TrimSpace(cfg.Namespace.Size) != "" {
-		return strings.ToUpper(strings.TrimSpace(cfg.Namespace.Size))
+	if size := namespaceExplicitSize(cfg); size != "" {
+		return size
 	}
-	if cfg.ServerTypeExplicit && strings.TrimSpace(cfg.ServerType) != "" {
-		return strings.ToUpper(strings.TrimSpace(cfg.ServerType))
-	}
-	return core.ProviderClassPrimaryTypeForProfiles(classProfiles, cfg, namespaceSizeForClass(cfg.Class))
+	return namespaceClassSize(cfg)
 }
 
 func (Provider) ServerTypeOverrideForConfig(cfg core.Config) (string, bool) {
 	size := strings.TrimSpace(cfg.Namespace.Size)
-	return strings.ToUpper(size), size != ""
+	if size == "" || (core.ClassWasExplicit(cfg) && !cfg.ServerTypeExplicit) {
+		return "", false
+	}
+	return strings.ToUpper(size), true
+}
+
+// namespaceExplicitSize returns a size chosen by the size flag or settings that
+// outrank the class; an explicitly chosen class outranks only a configured size.
+func namespaceExplicitSize(cfg core.Config) string {
+	if size := strings.TrimSpace(cfg.Namespace.Size); size != "" && (cfg.ServerTypeExplicit || !core.ClassWasExplicit(cfg)) {
+		return strings.ToUpper(size)
+	}
+	if cfg.ServerTypeExplicit && strings.TrimSpace(cfg.ServerType) != "" {
+		return strings.ToUpper(strings.TrimSpace(cfg.ServerType))
+	}
+	return ""
+}
+
+func namespaceClassSize(cfg core.Config) string {
+	return core.ProviderClassPrimaryTypeForProfiles(classProfiles, cfg, namespaceSizeForClass(cfg.Class))
 }
 
 func namespaceSizeForClass(class string) string {
