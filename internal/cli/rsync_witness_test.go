@@ -105,13 +105,13 @@ func testRsyncReceiverWitnessReusedLease(t *testing.T, binary, serverBinary stri
 	home, bin := t.TempDir(), t.TempDir()
 	installLocalRsyncSSH(t, bin, loginShell...)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	writeExecutable(t, filepath.Join(bin, "rsync"), "#!/bin/sh\n"+`[ "$(sed -n '1p' "$child")" = "$$" ] || exit 73`+"\nexec "+shellQuote(serverBinary)+` "$@"`+"\n")
+	key := workspaceOwnerKey("reused-rsync-receiver")
+	writeExecutable(t, filepath.Join(bin, "rsync"), "#!/bin/sh\n"+`[ "$(sed -n '1p' "$HOME/.crabbox/workspace-owners/`+key+`.child")" = "$$" ] || exit 73`+"\nexec "+shellQuote(serverBinary)+` "$@"`+"\n")
 	t.Setenv("HOME", home)
 	shell := filepath.Join(bin, "remote-shell")
 	writeExecutable(t, shell, "#!/bin/sh\nshift\nexec "+rsyncTestLoginShell(loginShell)+" \"$*\"\n")
 	source, remote := t.TempDir(), filepath.Join(t.TempDir(), "remote")
 	name := "payload name's\n.txt"
-	key := workspaceOwnerKey("reused-rsync-receiver")
 	for iteration := 0; iteration < 3; iteration++ {
 		token := strings.Repeat(string(rune('a'+iteration)), 64)
 		req := workspaceOwnerRemoteRequest{Action: workspaceOwnerAcquire, Key: key, Token: token, TTL: time.Minute}
