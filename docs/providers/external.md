@@ -453,7 +453,8 @@ Request shape:
   "desired": {
     "leaseId": "cbx_0123456789ab",
     "slug": "fast-coral",
-    "name": "crabbox-fast-coral-deadbeef"
+    "name": "crabbox-fast-coral-deadbeef",
+    "class": "beast"
   },
   "keep": false,
   "reclaim": false,
@@ -546,6 +547,7 @@ Successful lease response:
       "host": "devbox-fast-coral",
       "port": "22",
       "key": "/absolute/path/id_ed25519",
+      "hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...",
       "sshConfigProxy": true,
       "proxyCommand": "private-cli proxy devbox-fast-coral %p",
       "readyCheck": "command -v git && command -v rsync && command -v tar"
@@ -558,6 +560,18 @@ Successful lease response:
 SSH config. `proxyCommand` supports control-plane tunnels directly. Either path
 is automatically reused by rsync and WebVNC. A non-empty `proxyCommand` implies
 proxy-backed SSH even if `sshConfigProxy` is omitted.
+
+`desired.class` carries the value of `--class <name>` and is omitted when no
+class was given. Adapters may map it to a machine size.
+
+`ssh.hostKey` is optional. It is one OpenSSH public host key line, such as
+`ssh-ed25519 AAAA...`, without a hostname. When present, Crabbox pins it for
+the lease: SSH, rsync, and tunnels use `StrictHostKeyChecking=yes` against a
+per-lease known_hosts file and ignore the user's and the global known_hosts.
+Every `acquire` or `resolve` that returns a `hostKey` replaces the pin, so a
+key that changes after the VM restarts still connects. If a lease was pinned
+and a later response omits `hostKey`, Crabbox keeps the old pin, and a changed
+host key fails closed. Adapters that return no `hostKey` behave as before.
 
 When `readyCheck` is omitted, Crabbox uses a generic Linux tool check for
 `bash`, `python3`, `git`, `rsync`, and `tar`. Return an explicit `readyCheck`
