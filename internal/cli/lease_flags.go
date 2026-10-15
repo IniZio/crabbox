@@ -39,6 +39,7 @@ type leaseCreateFlagValues struct {
 	ImageWebView2     *bool
 	ImageDesktop      *bool
 	Code              *bool
+	EgressAllow       *string
 	ProviderFlags     providerFlagValues
 	Target            targetFlagValues
 	Network           networkFlagValues
@@ -97,6 +98,7 @@ func registerLeaseCreateFlagsWithOptions(fs *flag.FlagSet, defaults Config, opti
 		ImageWebView2:     fs.Bool("image-require-webview2", false, "require WebView2 support in the promoted image"),
 		ImageDesktop:      fs.Bool("image-require-desktop", false, "require desktop support in the promoted image"),
 		Code:              fs.Bool("code", defaults.Code, "provision or require web code-server capability"),
+		EgressAllow:       fs.String("egress-allow", getenv("CRABBOX_EGRESS_ALLOW", ""), egressAllowFlagUsage),
 		ProviderFlags:     registerProviderFlagsObserved(fs, defaults, options.observe),
 		Target:            registerTargetFlags(fs, defaults),
 		Network:           registerNetworkFlags(fs, defaults),
@@ -300,6 +302,9 @@ func applyLeaseCreateFlagsForTarget(cfg *Config, fs *flag.FlagSet, values leaseC
 		recordConfigInput(cfg, configInputGeneric, configInputFlag, true)
 	}
 	if err := applyProviderFlags(cfg, fs, values.ProviderFlags); err != nil {
+		return err
+	}
+	if err := applyEgressAllow(cfg, *values.EgressAllow); err != nil {
 		return err
 	}
 	prepareProviderDefaults(cfg)
