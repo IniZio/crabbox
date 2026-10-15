@@ -768,17 +768,17 @@ func workspaceOwnerTTLSeconds(ttl time.Duration) int64 {
 // Signal denial or exit between liveness probes requires independent PID-only
 // absence evidence before erasing a witness (no process arguments).
 const workspaceOwnerPOSIXProcess = `owner_process_status() {
-  if kill -0 "$1" 2>/dev/null; then
-    live_identity=$(ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//' | cut -c1-96)
-    if [ -n "$live_identity" ]; then
-      [ "$live_identity" = "$2" ] && return 0
-      return 1
-    fi
-  fi
-  observed_pids=$(ps -e -o pid= 2>/dev/null) || return 2
-  matching_pid=$(printf '%s\n' "$observed_pids" | awk -v pid="$1" '$1 == pid { print $1 }') || return 2
-  [ -z "$matching_pid" ] || return 2
-  return 1
+if kill -0 "$1" 2>/dev/null; then
+live_identity=$(ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//' | cut -c1-96)
+if [ -n "$live_identity" ]; then
+[ "$live_identity" = "$2" ] && return 0
+return 1
+fi
+fi
+observed_pids=$(ps -e -o pid= 2>/dev/null) || return 2
+matching_pid=$(printf '%s\n' "$observed_pids" | awk -v pid="$1" '$1 == pid { print $1 }') || return 2
+[ -z "$matching_pid" ] || return 2
+return 1
 }
 `
 
@@ -1099,11 +1099,12 @@ func remoteWorkspaceOwnerPOSIXWitnessScript(key, token, remote, setupMarker stri
 		started = "printf '%s\\n' " + shellQuote(setupMarker+" started") + " >&2 || setup_failed handoff\n"
 	}
 	inputSetup := ""
-	inputRedirect := ""
+	inputOpen := ""
 	if len(preserveInput) > 0 && preserveInput[0] {
 		inputSetup = `(umask 077; cat >"$run_dir/input") 2>/dev/null || { rm -rf "$run_dir" 2>/dev/null; setup_failed input; }
 `
-		inputRedirect = ` <"$run_dir/input"`
+		inputOpen = `exec <"$run_dir/input"
+`
 	}
 	gateFunction := workspaceOwnerPOSIXGate("5")
 	installBody := `set -eu
@@ -1116,13 +1117,13 @@ kill -0 "$child_pid" 2>/dev/null || exit 74
 live_child_identity=$(ps -o lstart= -p "$child_pid" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//' | cut -c1-96)
 [ -n "$live_child_identity" ] && [ "$live_child_identity" = "$child_identity" ] || exit 74
 if [ -f "$child" ]; then
-	existing_pid=$(sed -n '1p' "$child" 2>/dev/null || true)
-	existing_identity=$(sed -n '2p' "$child" 2>/dev/null || true)
-	case "$existing_pid" in ''|*[!0-9]*) exit 74 ;; esac
-	[ -n "$existing_identity" ] && [ "${#existing_identity}" -le 96 ] || exit 74
-	if owner_process_status "$existing_pid" "$existing_identity"; then exit 75; else existing_rc=$?; fi
-	[ "$existing_rc" -ne 2 ] || exit 74
-	rm -f "$child"
+existing_pid=$(sed -n '1p' "$child" 2>/dev/null || true)
+existing_identity=$(sed -n '2p' "$child" 2>/dev/null || true)
+case "$existing_pid" in ''|*[!0-9]*) exit 74 ;; esac
+[ -n "$existing_identity" ] && [ "${#existing_identity}" -le 96 ] || exit 74
+if owner_process_status "$existing_pid" "$existing_identity"; then exit 75; else existing_rc=$?; fi
+[ "$existing_rc" -ne 2 ] || exit 74
+rm -f "$child"
 fi
 child_tmp="$child.tmp.$$"
 (umask 077; printf '%s\n%s\n' "$child_pid" "$child_identity" >"$child_tmp")
@@ -1147,13 +1148,13 @@ rm -f "$child"`
 	// across exec. Close extra descriptors in a fresh -c shell (no script fd),
 	// so a detached user daemon cannot hold the witness identity pipe open.
 	macExec := `if [ "$(uname -s)" = Darwin ]; then
-  exec /bin/sh -c 'for owner_fd in /dev/fd/*; do
-    owner_fd=${owner_fd##*/}
-    case "$owner_fd" in ""|*[!0-9]*|0|1|2) continue ;; esac
-    eval "exec $owner_fd>&-"
-  done
-  owner_command=$1; shift
-  exec /bin/sh -c "$owner_command" cbx "$@"' cbx "$owner_command" "$@"` + inputRedirect + `
+exec /bin/sh -c 'for owner_fd in /dev/fd/*; do
+owner_fd=${owner_fd##*/}
+case "$owner_fd" in ""|*[!0-9]*|0|1|2) continue ;; esac
+eval "exec $owner_fd>&-"
+done
+owner_command=$1; shift
+exec /bin/sh -c "$owner_command" cbx "$@"' cbx "$owner_command" "$@"
 fi
 `
 	registrar := diagnostic + `set -u
@@ -1165,13 +1166,14 @@ child_identity=$(ps -o lstart= -p "$child_pid" 2>/dev/null | tr -s ' ' | sed 's/
 [ -n "$child_identity" ] || setup_failed identity
 export child_pid child_identity
 eval "$owner_gate_function"
-unset owner_gate_function
 run_owner_gate ` + shellQuote(installBody) + ` || setup_failed registration "$?"
 printf '%s\n%s\n' "$child_pid" "$child_identity" >&3 || setup_failed handoff
 exec 3>&-
 umask "$command_umask"
-` + started + `owner_command=` + shellQuote(remote) + `
-` + macExec + `exec sh -c "$owner_command" cbx "$@"` + inputRedirect + `
+` + inputOpen + started + `unset state child gate token command_umask run_dir child_pid child_identity owner_gate_function
+trap - 0
+owner_command=` + shellQuote(remote) + `
+` + macExec + `exec sh -c "$owner_command" cbx "$@"
 `
 	return diagnostic + `set -u
 command_umask=$(umask)

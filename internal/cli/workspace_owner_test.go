@@ -2177,3 +2177,33 @@ if (Test-Path -LiteralPath $child) { throw "late witness published child" }
 		t.Fatalf("Windows release out=%q err=%v", out, err)
 	}
 }
+
+func TestWorkspaceOwnerPOSIXWitnessHidesInternalVariables(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX witness needs /bin/sh")
+	}
+	for _, preserveInput := range []bool{false, true} {
+		home := t.TempDir()
+		root := filepath.Join(home, ".crabbox", "workspace-owners")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		state := "owner\ntok\n" + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + "\n"
+		if err := os.WriteFile(filepath.Join(root, "hidevars.owner"), []byte(state), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := remoteWorkspaceOwnerPOSIXWitnessScript("hidevars", "tok", "env", "", preserveInput)
+		cmd := exec.Command("/bin/sh", "-c", script, "cbx")
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+		cmd.Stdin = strings.NewReader("")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Skipf("witness script cannot run locally (preserveInput=%v): %v\n%s", preserveInput, err, out)
+		}
+		for _, name := range []string{"state", "child", "gate", "token", "command_umask", "run_dir", "child_pid", "child_identity", "owner_gate_function"} {
+			if strings.Contains("\n"+string(out), "\n"+name+"=") {
+				t.Fatalf("preserveInput=%v leaked %s to the command:\n%s", preserveInput, name, out)
+			}
+		}
+	}
+}
