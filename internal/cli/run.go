@@ -5001,6 +5001,7 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 	reclaim := fs.Bool("reclaim", false, "adopt an unclaimed provider resource before stopping it")
 	forceRecovery := fs.Bool("force", false, "recover and stop one exactly identified provider resource")
 	currentRepo := fs.Bool("current-repo", false, "stop a fixed-ID lease only while its claim belongs to the current repository")
+	deleteOnRelease := fs.Bool("delete", false, "delete the box instead of pausing or retaining it")
 	expectedLeaseID := fs.String("expected-provider-lease-id", "", "internal: immutable provider lease identity")
 	expectedAttemptLeaseID := fs.String("expected-provider-attempt-lease-id", "", "internal: immutable provider attempt identity")
 	expectedSlug := fs.String("expected-provider-slug", "", "internal: immutable provider slug identity")
@@ -5127,6 +5128,9 @@ func (a App) stop(ctx context.Context, args []string) (stopErr error) {
 	}
 	if err := finalizeProviderSelection(&cfg); err != nil {
 		return err
+	}
+	if *deleteOnRelease {
+		applyStopDelete(&cfg)
 	}
 	if flagWasSet(fs, "expected-provider-scope") {
 		_, actualScope, _, err := controllerProviderIdentityForConfig(cfg)
