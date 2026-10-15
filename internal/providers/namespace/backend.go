@@ -737,16 +737,22 @@ func namespaceImage(cfg core.Config) string {
 	return core.Blank(strings.TrimSpace(cfg.Namespace.Image), core.NamespaceConfigDefaultImage)
 }
 
+// namespaceSize picks the devbox size: an explicit size flag wins, then an
+// explicitly chosen class, then the configured size, then the default.
 func namespaceSize(cfg core.Config) string {
-	if strings.TrimSpace(cfg.Namespace.Size) != "" {
-		if size := namespaceValidSize(strings.TrimSpace(cfg.Namespace.Size)); size != "" {
+	if size := namespaceValidSize(namespaceExplicitSize(cfg)); size != "" {
+		return size
+	}
+	if core.ClassWasExplicit(cfg) {
+		if size := namespaceValidSize(namespaceClassSize(cfg)); size != "" {
 			return size
 		}
 	}
-	if strings.TrimSpace(cfg.ServerType) != "" {
-		if size := namespaceValidSize(strings.TrimSpace(cfg.ServerType)); size != "" {
-			return size
-		}
+	if size := namespaceValidSize(cfg.Namespace.Size); size != "" {
+		return size
+	}
+	if size := namespaceValidSize(cfg.ServerType); size != "" {
+		return size
 	}
 	return "M"
 }
