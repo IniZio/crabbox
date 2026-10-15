@@ -4,11 +4,15 @@
 
 ### Changes
 
+- Warmup: add provider-neutral `--egress-allow` (`CRABBOX_EGRESS_ALLOW`) mapped to each provider's allow-list; providers that cannot enforce one reject it.
+- Stop: add `--delete` to delete instead of pausing or retaining the box on providers that keep released boxes.
+- Providers: report `egress-allow`, `egress-allow-create-only`, `native-sleep` and `resume-rotates-host-key` features.
 - Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
 - AWS Windows images: enable guarded Server 2025 bakes from stock with source-only OS selection, guest-version proof, and matching Server Core containers; explicit Server 2022 leases retain stock selection. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
 
 ### Fixes
 
+- Run: stop exporting workspace-owner gate variables, including the owner token, to the remote command.
 - Validate OS selector compatibility after lease flags resolve the provider and target, so a configured or environment Windows Server selector accepts `--target windows` while incompatible final selections still fail.
 - Windows: preserve embedded quotes, empty arguments, backslashes, and Unicode when running native executables or passing arguments to uploaded PowerShell scripts. [PR 2736](https://github.com/openclaw/crabbox/pull/2736).
 - Azure: preserve original fixed-lease companion identities before readiness and across endpoint refresh, resume automatic cleanup only after durable deletion admission, and validate current attachments across the full companion set before deletion; reject reassigned or replacement resources and verify every resource slot before completion. [PR 2733](https://github.com/openclaw/crabbox/pull/2733). Thanks @galiniliev.
