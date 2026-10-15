@@ -58,6 +58,19 @@ func TestProviderServerTypeResolution(t *testing.T) {
 	}
 }
 
+func TestProviderServerTypeForCanonicalClasses(t *testing.T) {
+	for class, want := range map[string]string{
+		"tiny": "S", "small": "S", "standard": "S", "fast": "M", "large": "L", "beast": "XL",
+	} {
+		t.Run(class, func(t *testing.T) {
+			cfg := core.Config{Provider: namespaceProvider, TargetOS: targetLinux, Architecture: "amd64", Class: class}
+			if got := (Provider{}).ServerTypeForConfig(cfg); got != want {
+				t.Fatalf("class %q size=%q want %q", class, got, want)
+			}
+		})
+	}
+}
+
 func TestParseNamespaceListAcceptsArrayAndWrappedObjects(t *testing.T) {
 	for name, input := range map[string]string{
 		"array":   `[{"name":"crabbox-blue-lobster-deadbeef","status":"running","size":"L","repository":"github.com/openclaw/crabbox","created_at":"2026-05-09T12:00:00Z"}]`,
@@ -688,4 +701,32 @@ func (r *namespaceQueuedRunner) Run(_ context.Context, req core.LocalCommandRequ
 		r.errs = r.errs[1:]
 	}
 	return result, err
+}
+
+func TestNamespaceDeleteOnReleaseExplicitOverridesLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		label    string
+		explicit bool
+		config   bool
+		want     bool
+	}{
+		{"label stop, not explicit", "stop", false, true, false},
+		{"label stop, explicit delete", "stop", true, true, true},
+		{"label delete, not explicit", "delete", false, false, true},
+		{"no label, explicit delete", "", true, true, true},
+		{"no label, not explicit, config", "", false, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := core.Config{Namespace: core.NamespaceConfig{DeleteOnRelease: tt.config}}
+			if tt.explicit {
+				markDeleteOnReleaseExplicit(&cfg)
+			}
+			lease := core.LeaseTarget{Server: core.Server{Labels: map[string]string{"release": tt.label}}}
+			if got := namespaceDeleteOnRelease(lease, cfg); got != tt.want {
+				t.Fatalf("got %v want %v", got, tt.want)
+			}
+		})
+	}
 }
