@@ -173,3 +173,20 @@ func TestPauseResumeCapabilityDoesNotChangeClaimScope(t *testing.T) {
 		t.Fatalf("scope changed: %s != %s", before, after)
 	}
 }
+
+func TestResumeReplacesHostKeyPin(t *testing.T) {
+	oldKey, newKey := testHostKey(t), testHostKey(t)
+	reply := `{"protocolVersion":1,"lease":{"leaseId":"cbx_abcdef123456","ssh":{"user":"vm","host":"vm.example.test","port":"22","hostKey":"` + newKey + `"}}}`
+	backend, _, _ := pauseResumeBackend(t, true, "printf '%s' '"+reply+"'")
+	old, err := hostKeyLease(oldKey).pinnedTarget(backend.cfg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Resume(context.Background(), core.ResumeRequest{ID: "fast-coral"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readKnownHosts(t, old.SSH.KnownHostsFile)
+	if strings.Contains(got, strings.Fields(oldKey)[1]) || !strings.Contains(got, strings.Fields(newKey)[1]) {
+		t.Fatalf("known_hosts=%q", got)
+	}
+}
