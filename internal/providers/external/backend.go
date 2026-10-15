@@ -63,6 +63,11 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}()
 	}
 	desired := &desiredLease{LeaseID: leaseID, Slug: slug, Name: core.LeaseProviderName(leaseID, slug)}
+	// Options.Class always carries the config default; only forward a class the
+	// user actually chose so adapters can tell "unset" from "default".
+	if core.ClassWasExplicit(b.cfg) {
+		desired.Class = strings.TrimSpace(req.Options.Class)
+	}
 	response, err := b.invoke(ctx, protocolRequest{
 		Operation: "acquire",
 		Desired:   desired,
@@ -96,7 +101,13 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 		return core.LeaseTarget{}, err
 	}
-	lease := response.Lease.target(b.cfg, req.Keep)
+	lease, err := response.Lease.pinnedTarget(b.cfg, req.Keep)
+	if err != nil {
+		if !req.Keep {
+			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, response.Lease))
+		}
+		return core.LeaseTarget{}, err
+	}
 	if req.OnAcquired != nil {
 		if err := req.OnAcquired(lease); err != nil {
 			// An unacknowledged controller resource must never survive merely
@@ -323,7 +334,10 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 	} else if strings.TrimSpace(response.Lease.LeaseID) == "" {
 		return core.LeaseTarget{}, core.Exit(5, "external provider resolve returned no stable leaseId for %q", req.ID)
 	}
-	lease := response.Lease.target(b.cfg, keep)
+	lease, err := response.Lease.pinnedTarget(b.cfg, keep)
+	if err != nil {
+		return core.LeaseTarget{}, err
+	}
 	if err := validateLease(lease, !req.ReleaseOnly, !req.ReleaseOnly); err != nil {
 		return core.LeaseTarget{}, err
 	}

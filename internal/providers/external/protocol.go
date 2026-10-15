@@ -1,6 +1,8 @@
 package external
 
 import (
+	"errors"
+	"os"
 	"strings"
 	"time"
 
@@ -40,6 +42,7 @@ type desiredLease struct {
 	LeaseID string `json:"leaseId"`
 	Slug    string `json:"slug"`
 	Name    string `json:"name"`
+	Class   string `json:"class,omitempty"`
 }
 
 type protocolRepo struct {
@@ -82,6 +85,7 @@ type protocolSSH struct {
 	NoControlMaster bool     `json:"noControlMaster,omitempty"`
 	SSHConfigProxy  bool     `json:"sshConfigProxy,omitempty"`
 	ProxyCommand    string   `json:"proxyCommand,omitempty"`
+	HostKey         string   `json:"hostKey,omitempty"`
 }
 
 func repoForProtocol(repo core.Repo) *protocolRepo {
@@ -188,6 +192,61 @@ func (p protocolLease) target(cfg core.Config, keep bool) core.LeaseTarget {
 	}
 	core.ApplyTargetChildEnvironmentBoundary(cfg, &target)
 	return core.LeaseTarget{Server: server, SSH: target, LeaseID: leaseID}
+}
+
+// pinnedTarget converts a lease and applies the adapter's host-key pin, so every
+// acquire or resolve that carries ssh.hostKey replaces the previous pin.
+func (p protocolLease) pinnedTarget(cfg core.Config, keep bool) (core.LeaseTarget, error) {
+	lease := p.target(cfg, keep)
+	if lease.SSH.Host == "" {
+		return lease, nil
+	}
+	hostKey := ""
+	if p.SSH != nil {
+		hostKey = p.SSH.HostKey
+	}
+	if err := pinLeaseHostKey(&lease.SSH, lease.LeaseID, hostKey); err != nil {
+		return core.LeaseTarget{}, err
+	}
+	return lease, nil
+}
+
+// pinLeaseHostKey makes hostKey the only trusted key for the lease. Without a
+// hostKey it keeps enforcing an earlier pin and never falls back to learning keys.
+func pinLeaseHostKey(target *core.SSHTarget, leaseID, hostKey string) error {
+	hostKey = strings.TrimSpace(hostKey)
+	if hostKey == "" {
+		if leaseID == "" {
+			return nil
+		}
+		path, err := core.ExistingLeaseKnownHostsPath(leaseID)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+			return nil
+		}
+		alias, err := core.LeaseHostKeyAlias(leaseID)
+		if err != nil {
+			return err
+		}
+		target.KnownHostsFile = path
+		target.HostKeyAlias = alias
+		target.AuthoritativeKnownHosts = true
+		return nil
+	}
+	if leaseID == "" {
+		return core.Exit(5, "external provider returned ssh.hostKey without a leaseId")
+	}
+	if err := core.UseLeaseKnownHosts(target, leaseID); err != nil {
+		return err
+	}
+	target.SSHHostKey = hostKey
+	target.AuthoritativeKnownHosts = true
+	return core.PrepareLeaseSSHTrust(target, leaseID)
 }
 
 const externalDefaultReadyCheck = "command -v bash >/dev/null && command -v python3 >/dev/null && command -v git >/dev/null && command -v rsync >/dev/null && command -v tar >/dev/null"
