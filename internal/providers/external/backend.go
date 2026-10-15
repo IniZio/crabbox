@@ -606,7 +606,11 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		failure, _ := err.(*procjson.Failure)
 		if failure != nil && failure.Stage == procjson.StageRun {
 			message := strings.TrimSpace(core.Blank(strings.TrimSpace(result.Stderr), result.Stdout))
-			return protocolResponse{}, core.Exit(result.ExitCode, "external provider command failed: %v: %s", failure.Err, message)
+			code := result.ExitCode
+			if code == 0 {
+				code = 5
+			}
+			return protocolResponse{}, core.Exit(code, "external provider command failed: %v: %s", failure.Err, message)
 		}
 		if failure != nil && failure.Stage == procjson.StageOutputLimit {
 			return protocolResponse{}, core.Exit(5, "external provider %v", failure.Err)
@@ -614,6 +618,11 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		return protocolResponse{}, core.Exit(5, "external provider returned invalid JSON: %v", err)
 	}
 	if message := strings.TrimSpace(response.Error); message != "" {
+		if request.Operation == "pause" || request.Operation == "resume" {
+			if tail := stderrTail(result.Stderr); tail != "" {
+				message += ": " + tail
+			}
+		}
 		return protocolResponse{}, core.Exit(5, "external provider: %s", message)
 	}
 	if response.ProtocolVersion != protocolVersion {
@@ -713,6 +722,8 @@ func externalControllerScope(cfg core.Config) (string, error) {
 	}
 	if cfg.External.Capabilities.IdempotentLeaseID {
 		capabilities := cfg.External.Capabilities
+		// pauseResume only gates an optional op; toggling it must not orphan existing claims.
+		capabilities.PauseResume = false
 		scope.Capabilities = &capabilities
 	}
 	if lifecycleConfigured(cfg.External) {

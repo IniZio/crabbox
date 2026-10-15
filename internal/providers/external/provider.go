@@ -39,6 +39,17 @@ func (Provider) Spec() core.ProviderSpec {
 	}
 }
 
+var _ core.ConfiguredFeatureProvider = Provider{}
+
+// ConfiguredFeatures lists features that depend on trusted config rather than
+// the static spec. Declarative lifecycle has no pause or resume operation.
+func (Provider) ConfiguredFeatures(cfg core.Config) []core.Feature {
+	if cfg.External.Capabilities.PauseResume && !lifecycleConfigured(cfg.External) {
+		return []core.Feature{core.FeaturePauseResume}
+	}
+	return nil
+}
+
 func (Provider) RegisterFlags(fs *flag.FlagSet, defaults core.Config) any {
 	return registerFlags(fs, defaults)
 }
