@@ -102,6 +102,12 @@ and work even when configuration is malformed.
   lifecycle capability, such as `cleanup`, `pause-resume`, `run-session`,
   `workspace-state`, or `coordinator-governed`. Repeatable.
 
+`providers --json` and `providers describe` also report these provider
+`features` tokens: `egress-allow` (enforces the generic `--egress-allow` list),
+`egress-allow-create-only` (list is fixed at box creation), `native-sleep`
+(provider idles the box without an explicit pause), and
+`resume-rotates-host-key` (SSH host key changes after resume).
+
 Repeated filters are combined with AND semantics. Comma-separated values are also
 accepted, so `--workspace checkpoint,fork` means the same thing as passing
 `--workspace checkpoint --workspace fork`. Filter values are checked against the

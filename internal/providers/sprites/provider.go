@@ -27,7 +27,7 @@ func (Provider) Spec() core.ProviderSpec {
 		Family:           "sprites",
 		Kind:             core.ProviderKindSSHLease,
 		Targets:          []core.TargetSpec{{OS: core.TargetLinux}},
-		Features:         core.FeatureSet{core.FeatureSSH, core.FeatureCrabboxSync},
+		Features:         core.FeatureSet{core.FeatureSSH, core.FeatureCrabboxSync, core.FeatureNativeSleep},
 		Coordinator:      core.CoordinatorNever,
 		ClassDisposition: core.ProviderClassDispositionUnmapped,
 	}
