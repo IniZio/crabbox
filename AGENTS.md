@@ -34,6 +34,7 @@ Run from the repository root. Use the Go toolchain declared in `go.mod` and the 
 - `go build -trimpath -o bin/crabbox ./cmd/crabbox`: build the local CLI.
 - `go vet ./...`: run Go static checks.
 - `go test -race -timeout=20m ./...`: run the Go test suite with the race detector and CI's race-test package timeout.
+- `scripts/test-fast.sh [packages...]`: quick local Go tests (about 3 min on 12 cores, no race detector): `internal/cli` in concurrent shards (`SHARDS`, default min(nproc, 8)) beside `./internal/providers/...`, or only the given packages. Sets `umask 022`; `FRESH=1` adds `-count=1`. Shard weights live in `scripts/test-fast-durations.txt`. Not a substitute for the race run above.
 - `gofmt -w path/to/changed.go`: format changed Go files; substitute their actual paths.
 - `npm ci --prefix worker`: install coordinator dependencies.
 - `npm run format:check --prefix worker`: verify TypeScript formatting.
