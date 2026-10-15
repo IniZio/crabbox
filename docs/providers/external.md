@@ -523,7 +523,9 @@ operation with the resolved lease:
 }
 ```
 
-The response is `{"protocolVersion":1}` with an optional `message`. An
+The response is `{"protocolVersion":1}` with an optional `message`. A `resume`
+response may also return a `lease` with `ssh.hostKey`, which replaces the lease's
+host-key pin. An
 `{"error":"..."}` response or a nonzero exit fails the Crabbox command with a
 nonzero exit and includes the tail of the adapter's stderr. When the capability
 is enabled, `crabbox providers --json` lists `pause-resume` for `external`;
@@ -568,7 +570,7 @@ class was given. Adapters may map it to a machine size.
 `ssh-ed25519 AAAA...`, without a hostname. When present, Crabbox pins it for
 the lease: SSH, rsync, and tunnels use `StrictHostKeyChecking=yes` against a
 per-lease known_hosts file and ignore the user's and the global known_hosts.
-Every `acquire` or `resolve` that returns a `hostKey` replaces the pin, so a
+Every `acquire`, `resolve`, or `resume` that returns a `hostKey` replaces the pin, so a
 key that changes after the VM restarts still connects. If a lease was pinned
 and a later response omits `hostKey`, Crabbox keeps the old pin, and a changed
 host key fails closed. Adapters that return no `hostKey` behave as before.
