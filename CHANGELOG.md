@@ -5,6 +5,13 @@
 ### Changes
 
 - Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
+- Warmup: add provider-neutral `--egress-allow` (`CRABBOX_EGRESS_ALLOW`) mapped to each provider's allow-list; providers that cannot enforce one reject it.
+- Stop: add `--delete` to delete instead of pausing or retaining the box on providers that keep released boxes.
+- Providers: report `egress-allow`, `egress-allow-create-only`, `native-sleep` and `resume-rotates-host-key` features.
+
+### Fixes
+
+- Run: stop exporting workspace-owner gate variables, including the owner token, to the remote command.
 
 ## 0.79.1 - 2026-10-20
 

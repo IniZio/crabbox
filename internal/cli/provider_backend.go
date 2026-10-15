@@ -926,6 +926,14 @@ const (
 	FeaturePauseResume          Feature = "pause-resume"
 	FeatureLeaseHeartbeat       Feature = "lease-heartbeat"
 	FeatureMCP                  Feature = "mcp-attachments"
+	// FeatureEgressAllow means the provider enforces the generic egress allow-list.
+	FeatureEgressAllow Feature = "egress-allow"
+	// FeatureEgressAllowCreateOnly means the allow-list is fixed when the box is created.
+	FeatureEgressAllowCreateOnly Feature = "egress-allow-create-only"
+	// FeatureNativeSleep means the provider idles the box itself without an explicit pause.
+	FeatureNativeSleep Feature = "native-sleep"
+	// FeatureResumeRotatesHostKey means the SSH host key changes after resume.
+	FeatureResumeRotatesHostKey Feature = "resume-rotates-host-key"
 )
 
 const FeaturePreparedArtifactWorkspace Feature = "prepared-artifact-workspace"
