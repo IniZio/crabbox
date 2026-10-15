@@ -24,6 +24,7 @@ external:
     - /absolute/path/provider.mjs
   capabilities:
     idempotentLeaseId: true
+    pauseResume: true
   config:
     backend: vm
     namespace: team-devboxes
@@ -130,6 +131,14 @@ fixed `desired.leaseId`, `desired.slug`, and `desired.name` always return that
 same resource. `adapter serve` rejects external adapters without this
 opt-in before any lifecycle side effect. Declarative adapters must also use
 the command-attested identity contract described below.
+
+`external.capabilities.pauseResume` enables the `pause` and `resume` protocol
+operations behind `crabbox pause` and `crabbox resume`. Set it only in trusted
+user config; repository config, environment variables, and flags cannot enable
+it. Without it, both commands fail with exit 2 and
+`provider=external does not support pause`. It has no effect with a declarative
+`external.lifecycle`, which has no pause or resume operation. It does not change
+the local claim scope.
 
 Local claims are scoped to a fingerprint of the selected protocol command or
 declarative lifecycle, connection templates, `external.config`, normalized
@@ -490,7 +499,34 @@ list
 release
 touch
 cleanup
+pause   (only with external.capabilities.pauseResume)
+resume  (only with external.capabilities.pauseResume)
 ```
+
+`pause` and `resume` first send a `resolve` request for the lease with
+`releaseOnly: true`, so the adapter must answer it for a paused lease without
+waiting for SSH. Crabbox then sends the
+operation with the resolved lease:
+
+```json
+{
+  "protocolVersion": 1,
+  "operation": "pause",
+  "config": {"backend": "vm"},
+  "lease": {
+    "leaseId": "cbx_0123456789ab",
+    "slug": "fast-coral",
+    "name": "devbox-fast-coral",
+    "cloudId": "private-control-plane/devbox-fast-coral"
+  }
+}
+```
+
+The response is `{"protocolVersion":1}` with an optional `message`. An
+`{"error":"..."}` response or a nonzero exit fails the Crabbox command with a
+nonzero exit and includes the tail of the adapter's stderr. When the capability
+is enabled, `crabbox providers --json` lists `pause-resume` for `external`;
+otherwise it does not.
 
 Successful lease response:
 

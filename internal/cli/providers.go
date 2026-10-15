@@ -105,6 +105,10 @@ func (a App) providers(ctx context.Context, args []string) error {
 		return Exit(2, "usage: crabbox providers [--json] [--kind KIND] [--category CATEGORY] [--target TARGET] [--feature FEATURE] [--runtime CAPABILITY] [--reachability CAPABILITY] [--workspace CAPABILITY] [--evidence CAPABILITY] [--lifecycle CAPABILITY] OR crabbox providers filters [--json] OR crabbox providers recommend <use-case> [--limit N] [--json]")
 	}
 	entries := providerMatrix()
+	// A bad config must not break the provider catalog; keep the static matrix.
+	if cfg, err := loadConfig(); err == nil {
+		entries = providerMatrixForConfig(cfg)
+	}
 	filters := filterFlags.filters()
 	if err := validateProviderMatrixFilters(filters, entries); err != nil {
 		return err
@@ -211,8 +215,36 @@ func providerMatrix() []providerMatrixEntry {
 	return entries
 }
 
+// ConfiguredFeatureProvider is implemented by providers whose feature set
+// depends on loaded config, such as an adapter capability opt-in.
+type ConfiguredFeatureProvider interface {
+	ConfiguredFeatures(cfg Config) []Feature
+}
+
+func providerMatrixForConfig(cfg Config) []providerMatrixEntry {
+	providers := registeredProviders()
+	entries := make([]providerMatrixEntry, 0, len(providers))
+	for _, provider := range providers {
+		entries = append(entries, providerMatrixEntryForConfig(provider, &cfg))
+	}
+	return entries
+}
+
 func providerMatrixEntryFor(provider Provider) providerMatrixEntry {
+	return providerMatrixEntryForConfig(provider, nil)
+}
+
+func providerMatrixEntryForConfig(provider Provider, cfg *Config) providerMatrixEntry {
 	spec := provider.Spec()
+	if configured, ok := provider.(ConfiguredFeatureProvider); ok && cfg != nil {
+		features := append(FeatureSet{}, spec.Features...)
+		for _, feature := range configured.ConfiguredFeatures(*cfg) {
+			if !features.Has(feature) {
+				features = append(features, feature)
+			}
+		}
+		spec.Features = features
+	}
 	name := spec.Name
 	category := benchmarkProviderCategories[name]
 	targets := formatProviderTargets(spec.Targets)

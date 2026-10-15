@@ -346,6 +346,7 @@ type ExternalConfig struct {
 
 type ExternalCapabilitiesConfig struct {
 	IdempotentLeaseID bool `yaml:"idempotentLeaseId,omitempty" json:"idempotentLeaseId,omitempty"`
+	PauseResume       bool `yaml:"pauseResume,omitempty" json:"pauseResume,omitempty"`
 }
 
 type ExternalLifecycleConfig struct {
@@ -3014,7 +3015,12 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 			recordConfigInput(cfg, "external", inputSource, true)
 			cfg.credentialProvenance.externalConfig = credentialSource
 		}
+		pauseResume := cfg.External.Capabilities.PauseResume
 		if applyOptional(&cfg.External.Capabilities, file.External.Capabilities) {
+			if !trusted {
+				// Pause and resume run adapter commands, so only user config may opt in.
+				cfg.External.Capabilities.PauseResume = pauseResume
+			}
 			recordConfigInput(cfg, "external", inputSource, true)
 		}
 		if file.External.Lifecycle != nil {
