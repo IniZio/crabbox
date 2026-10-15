@@ -56,6 +56,17 @@ func prepareLeaseSSHTrust(target *SSHTarget, leaseID string) error {
 	return installAuthoritativeSSHHostKey(target)
 }
 
+// PrepareLeaseSSHTrust installs target.SSHHostKey as the only trusted key in the
+// per-lease known_hosts, replacing any earlier pin.
+func PrepareLeaseSSHTrust(target *SSHTarget, leaseID string) error {
+	return prepareLeaseSSHTrust(target, leaseID)
+}
+
+// LeaseHostKeyAlias returns the stable known_hosts name for a lease's host key.
+func LeaseHostKeyAlias(leaseID string) (string, error) {
+	return leaseHostKeyAlias(leaseID)
+}
+
 func leaseHostKeyAlias(leaseID string) (string, error) {
 	if !validLeaseClaimPathID(leaseID) {
 		return "", invalidLeaseClaimIDError{id: leaseID}
