@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Serve: report per-machine lease counts, runtime, and allocated CPU-hours; machine listings and the portal use durable completion rollups starting at deployment without a history scan or backfill, while usage retains full recorded history. [PR 2864](https://github.com/openclaw/crabbox/pull/2864).
+
 ### Fixed
 
 - Sync: keep finalization fetches blob-filtered when completing shallow Git history, and explain live-child owner release refusals with safe lease recovery guidance. [PR 2854](https://github.com/openclaw/crabbox/pull/2854).
