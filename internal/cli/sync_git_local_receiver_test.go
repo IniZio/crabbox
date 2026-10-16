@@ -699,3 +699,132 @@ func TestGitLocalReceiverReusableAfterWorkloadInvalidation(t *testing.T) {
 		t.Fatalf("changed refs reusable: %q", out)
 	}
 }
+
+// shallowReceiverFixture bundles only HEAD's commit and tree, as a depth-1 clone would.
+func shallowReceiverFixture(t *testing.T, format string) (gitLocalSeedPlan, []byte) {
+	t.Helper()
+	plan, _, source := localReceiverFixture(t, format)
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGit(t, filepath.Dir(clone), "clone", "-q", "--depth", "1", "file://"+source, clone)
+	runGit(t, clone, "update-ref", localGitSeedHeadRef, plan.Head)
+	bundle := filepath.Join(t.TempDir(), "shallow.bundle")
+	runGit(t, clone, "bundle", "create", bundle, localGitSeedHeadRef)
+	data, err := os.ReadFile(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	plan.Refs = plan.Refs[:1]
+	plan.Digest = hex.EncodeToString(digest[:])
+	plan.PackedBytes = int64(len(data))
+	plan.Shallow = []string{plan.Head}
+	return plan, data
+}
+
+func TestGitLocalReceiverShallowSeed(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			plan, data := shallowReceiverFixture(t, format)
+			workdir := t.TempDir()
+			requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+			requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil)
+			if got := gitOutput(workdir, "rev-parse", "--is-shallow-repository"); got != "true" {
+				t.Fatalf("is-shallow-repository: %q", got)
+			}
+			if got := gitOutput(workdir, "rev-parse", "HEAD"); got != plan.Head {
+				t.Fatalf("HEAD: %q", got)
+			}
+			if got := gitOutput(workdir, "diff", "--cached", "--name-only"); got != "" {
+				t.Fatalf("index differs from HEAD: %q", got)
+			}
+			if got := gitOutput(workdir, "write-tree"); got != plan.Tree {
+				t.Fatalf("index tree: %q", got)
+			}
+			if got := gitOutput(workdir, "rev-list", "--count", "HEAD"); got != "1" {
+				t.Fatalf("history length: %q", got)
+			}
+			if got, err := os.ReadFile(filepath.Join(workdir, ".git/shallow")); err != nil || string(got) != plan.Head+"\n" {
+				t.Fatalf("shallow file: %q %v", got, err)
+			}
+			if out := requireLocalReceiver(t, remoteGitLocalSeedFingerprint(workdir, plan), nil); string(out) != plan.Fingerprint {
+				t.Fatalf("fingerprint: %q", out)
+			}
+			requireLocalReceiver(t, remoteGitLocalSeedReusable(workdir, plan), nil)
+		})
+	}
+}
+
+func TestGitLocalReceiverRejectsUnexpectedShallowMetadata(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	shallow := filepath.Join(workdir, ".git/shallow")
+	mustWriteTestFile(t, shallow, plan.Head+"\n")
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil); err == nil || !bytes.Contains(out, []byte("verify-metadata failed")) {
+		t.Fatalf("full plan accepted stray shallow file: %q %v", out, err)
+	}
+}
+
+func TestGitLocalReceiverRejectsShallowMismatch(t *testing.T) {
+	plan, data := shallowReceiverFixture(t, "sha1")
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	shallow := filepath.Join(workdir, ".git/shallow")
+	for name, content := range map[string]string{
+		"other":   strings.Repeat("a", 40) + "\n",
+		"extra":   plan.Head + "\n" + strings.Repeat("a", 40) + "\n",
+		"missing": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if content == "" {
+				os.Remove(shallow)
+			} else {
+				mustWriteTestFile(t, shallow, content)
+			}
+			if out, err := runLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil); err == nil || !bytes.Contains(out, []byte("verify-metadata failed")) {
+				t.Fatalf("shallow mismatch accepted: %q %v", out, err)
+			}
+		})
+	}
+	mustWriteTestFile(t, shallow, plan.Head+"\n")
+	full := plan
+	full.Shallow = nil
+	if out, err := runLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, full), nil); err == nil {
+		t.Fatalf("full plan accepted shallow metadata: %q", out)
+	}
+}
+
+func TestGitLocalSeedPlanValidShallow(t *testing.T) {
+	plan, _, _ := localReceiverFixture(t)
+	other := strings.Repeat("a", 40)
+	for name, tc := range map[string]struct {
+		shallow []string
+		valid   bool
+	}{
+		"empty":        {nil, true},
+		"head":         {[]string{plan.Head}, true},
+		"sorted pair":  {[]string{plan.Head, other}, true},
+		"malformed":    {[]string{plan.Head, "xyz"}, false},
+		"uppercase":    {[]string{plan.Head, strings.Repeat("A", 40)}, false},
+		"wrong length": {[]string{plan.Head, strings.Repeat("a", 64)}, false},
+		"duplicate":    {[]string{plan.Head, plan.Head}, false},
+		"lacks head":   {[]string{other}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := plan
+			candidate.Shallow = tc.shallow
+			if got := candidate.valid(); got != tc.valid {
+				t.Fatalf("valid() = %v, want %v", got, tc.valid)
+			}
+		})
+	}
+}
+
+func TestGitLocalReceiverWindowsRejectsShallow(t *testing.T) {
+	plan, _ := shallowReceiverFixture(t, "sha1")
+	for _, command := range []string{windowsGitLocalSeed(`C:\work`, plan), windowsGitLocalSeedFinalize(`C:\work`, plan)} {
+		if !strings.Contains(decodePowerShellCommand(t, command), "shallow history is not supported on Windows") {
+			t.Fatalf("Windows shallow plan not rejected: %q", command)
+		}
+	}
+}
