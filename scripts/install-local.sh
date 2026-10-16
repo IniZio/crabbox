@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build the controller and a matching runtime pack from this checkout, verify
-# them together, and install both into <bindir>.
+# them together, and install both into <bindir>. <version> is the string `crabbox --version` reports.
 set -euo pipefail
 
-BINDIR=${1:?usage: scripts/install-local.sh <bindir>}
+BINDIR=${1:?usage: scripts/install-local.sh <bindir> <version>}
+VERSION=${2:?usage: scripts/install-local.sh <bindir> <version>}
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mkdir -p "$BINDIR"
 BINDIR=$(cd "$BINDIR" && pwd)
@@ -13,7 +14,9 @@ mkdir "$STAGE/crabbox-runtime"
 cd "$ROOT"
 
 build_id=$(go run ./scripts/runtime-artifacts source-id --source-directory "$ROOT")
-go build -trimpath -o "$STAGE/crabbox" ./cmd/crabbox
+go build -trimpath \
+  -ldflags="-s -w -X github.com/openclaw/crabbox/internal/cli.version=$VERSION" \
+  -o "$STAGE/crabbox" ./cmd/crabbox
 
 for target in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64.exe windows-arm64.exe; do
   platform=${target%%-*}
@@ -44,3 +47,9 @@ if ! mv "$STAGE/crabbox-runtime" "$BINDIR/crabbox-runtime" || ! mv -f "$STAGE/cr
 fi
 echo "installed $BINDIR/crabbox with matching crabbox-runtime/ (source $build_id)"
 [[ -z "$backup" ]] || echo "previous runtime pack kept at $backup"
+"$BINDIR/crabbox" --version
+installed_sha=$(sha256sum "$BINDIR/crabbox" | cut -d' ' -f1)
+manifest_sha=$(sed -n 's/.*"controllerSha256": *"\([0-9a-f]*\)".*/\1/p' "$BINDIR/crabbox-runtime/manifest.json")
+echo "controller sha256 $installed_sha"
+echo "manifest controllerSha256 $manifest_sha"
+[[ "$installed_sha" == "$manifest_sha" ]] || { echo "controller does not match manifest" >&2; exit 1; }

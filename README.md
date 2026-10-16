@@ -522,10 +522,12 @@ and WSL2. Do not mix builds or copy only the CLI. Reinstall the matching archive
 or Homebrew package if an official release's pack is missing or incomplete;
 release installations do not compile replacement companions from source.
 
-To run a locally built controller, use `scripts/install-local.sh <bindir>`.
-It builds the controller and all six runtime companions from the checkout,
-verifies them together, then installs `crabbox` and `crabbox-runtime/` side by
-side. The previous pack is kept as `crabbox-runtime.bak.<timestamp>`.
+To run a locally built controller, use `scripts/install-local.sh <bindir> <version>`,
+for example `0.72.0-moor.8`. It builds the controller at that version and all
+six runtime companions from the checkout, verifies them together, and installs
+`crabbox` and `crabbox-runtime/` side by side. It then prints
+`crabbox --version` and checks the controller hash against the manifest. The
+previous pack is kept as `crabbox-runtime.bak.<timestamp>`.
 
 For a CLI-only source install, pin a supported release (v0.44.0 or later):
 
