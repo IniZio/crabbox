@@ -104,6 +104,71 @@ func TestPrepareLocalGitSeedPinsWorkingFilesAndMetadata(t *testing.T) {
 	}
 }
 
+func TestPrepareLocalGitSeedShallowCloneReachesBox(t *testing.T) {
+	clearConfigEnv(t)
+	cfg := defaultConfig()
+	cfg.Sync.GitSeedSource = "local"
+	full := localSeedTestRepo(t, "sha1")
+	localSeedTestChain(t, full, 3)
+	clone := filepath.Join(t.TempDir(), "clone")
+	localSeedTestGit(t, full, "", "-c", "protocol.file.allow=always", "clone", "--depth", "1", "file://"+full, clone)
+	head := localSeedTestGit(t, clone, "", "rev-parse", "HEAD")
+	if got := localSeedTestGit(t, clone, "", "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("fixture clone is not shallow: %q", got)
+	}
+	seed, err := prepareLocalGitSeed(context.Background(), Repo{Root: clone, Head: head}, cfg, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := seed.cleanup(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if !slices.Equal(seed.Plan.Shallow, []string{head}) {
+		t.Fatalf("plan shallow=%v want [%s]", seed.Plan.Shallow, head)
+	}
+	data, err := os.ReadFile(seed.Artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, seed.Plan), data)
+	requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, seed.Plan), nil)
+	if got := gitOutput(workdir, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("is-shallow-repository: %q", got)
+	}
+	if got := gitOutput(workdir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD: %q want %q", got, head)
+	}
+	if got := gitOutput(workdir, "rev-list", "--count", "HEAD"); got != "1" {
+		t.Fatalf("history length: %q", got)
+	}
+	if got := gitOutput(workdir, "rev-parse", "HEAD^{tree}"); got != seed.Plan.Tree {
+		t.Fatalf("tree: %q want %q", got, seed.Plan.Tree)
+	}
+}
+
+func TestPrepareLocalGitSeedFullHistoryStaysNonShallow(t *testing.T) {
+	clearConfigEnv(t)
+	cfg := defaultConfig()
+	cfg.Sync.GitSeedSource = "local"
+	root := localSeedTestRepo(t, "sha1")
+	head, _ := localSeedTestChain(t, root, 3)
+	seed, err := prepareLocalGitSeed(context.Background(), Repo{Root: root, Head: head}, cfg, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := seed.cleanup(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if len(seed.Plan.Shallow) != 0 {
+		t.Fatalf("full history marked shallow: %v", seed.Plan.Shallow)
+	}
+}
+
 func TestLocalGitSeedPreservesGlobalIgnorePolicy(t *testing.T) {
 	clearConfigEnv(t)
 	root := localSeedTestRepo(t, "sha1")

@@ -103,6 +103,7 @@ func prepareLocalGitSeed(ctx context.Context, repo Repo, cfg Config, force bool,
 		Head: selection.Head, Tree: selection.Tree,
 		ObjectFormat: seed.Artifact.ObjectFormat, Digest: seed.Artifact.Digest,
 		Refs: seed.Artifact.Refs, PackedBytes: seed.Artifact.PackedBytes,
+		Shallow: seed.Artifact.Shallow,
 	}
 	seed.Plan.Exclude = localGitSeedHostExclude(ctx, repo.Root)
 	if cfg.Sync.Fingerprint {

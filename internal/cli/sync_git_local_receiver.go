@@ -18,6 +18,8 @@ type gitLocalSeedPlan struct {
 	Fingerprint                      string
 	// Exclude is the host's info/exclude content; the Box gets it plus .crabbox/.
 	Exclude string
+	// Shallow becomes the Box's .git/shallow; empty means full history.
+	Shallow []string
 }
 
 func (p gitLocalSeedPlan) valid() bool {
@@ -44,7 +46,30 @@ func (p gitLocalSeedPlan) valid() bool {
 			headRef = ref.OID == p.Head
 		}
 	}
-	return headRef
+	if !headRef {
+		return false
+	}
+	if len(p.Shallow) == 0 {
+		return true
+	}
+	seenShallow := make(map[string]bool, len(p.Shallow))
+	for _, oid := range p.Shallow {
+		if !hex(oid, n) || seenShallow[oid] {
+			return false
+		}
+		seenShallow[oid] = true
+	}
+	return seenShallow[p.Head]
+}
+
+// shallowLines is the exact content of the Box's .git/shallow, or empty for full history.
+func (p gitLocalSeedPlan) shallowLines() string {
+	if len(p.Shallow) == 0 {
+		return ""
+	}
+	lines := append([]string(nil), p.Shallow...)
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
 
 func (p gitLocalSeedPlan) refLines() string {
@@ -107,6 +132,7 @@ expected_metadata_refs_digest=` + shellQuote(plan.metadataRefsDigest()) + `
 transport_head_ref=` + shellQuote(localGitSeedHeadRef) + `
 expected_fingerprint=` + shellQuote(plan.Fingerprint) + `
 exclude_lines=` + shellQuote(plan.Exclude) + `
+expected_shallow=` + shellQuote(plan.shallowLines()) + `
 stage=
 backup=
 finalizing=
@@ -175,7 +201,12 @@ verify_metadata() {
   actual_refs="$(plain_git --git-dir="$metadata" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null)" || return 1
   actual_refs="$(printf '%s\n' "$actual_refs" | sort)" || return 1
   [ "$(printf '%s' "$actual_refs" | hash_stdin)" = "$expected_metadata_refs_digest" ] || return 1
-  [ ! -e "$metadata/shallow" ] && [ ! -e "$metadata/objects/info/alternates" ] || return 1
+  if [ -n "$expected_shallow" ]; then
+    [ -f "$metadata/shallow" ] && [ ! -L "$metadata/shallow" ] && [ "$(cat "$metadata/shallow")" = "$expected_shallow" ] || return 1
+  else
+    [ ! -e "$metadata/shallow" ] || return 1
+  fi
+  [ ! -e "$metadata/objects/info/alternates" ] || return 1
   [ ! -e "$metadata/config.worktree" ] && [ ! -e "$metadata/info/grafts" ] || return 1
   config_keys="$(plain_git config --file "$metadata/config" --no-includes --name-only --list 2>/dev/null)" || return 1
   while IFS= read -r key; do
@@ -212,6 +243,10 @@ plain_git --git-dir="$fresh" config core.logAllRefUpdates false >/dev/null 2>&1 
 mkdir -p -- "$fresh/info" || fail
 printf '%%s\n.crabbox/\n' "$exclude_lines" > "$fresh/info/exclude" || fail
 phase=verify-bundle
+# Git must see the shallow boundary before any step that walks history.
+if [ -n "$expected_shallow" ]; then
+  printf '%%s\n' "$expected_shallow" > "$fresh/shallow" || fail
+fi
 bundle_refs="$(plain_git --git-dir="$fresh" bundle list-heads "$bundle" 2>/dev/null)" || fail
 bundle_refs="$(printf '%%s\n' "$bundle_refs" | sort)" || fail
 [ "$(printf '%%s' "$bundle_refs" | hash_stdin)" = "$expected_refs_digest" ] || fail
@@ -311,6 +346,9 @@ func windowsGitLocalSeedFinalize(workdir string, plan gitLocalSeedPlan) string {
 func windowsGitLocalSeedCommand(workdir string, plan gitLocalSeedPlan, finalize bool) string {
 	if !plan.valid() {
 		return PowershellCommand("[Console]::Error.WriteLine('local Git seed: invalid receiver plan'); exit 67")
+	}
+	if len(plan.Shallow) != 0 {
+		return PowershellCommand("[Console]::Error.WriteLine('local Git seed: shallow history is not supported on Windows'); exit 67")
 	}
 	script := windowsPowerShellPathRefresh + `$ErrorActionPreference = 'Stop'
 $workdir = ` + psQuote(workdir) + `

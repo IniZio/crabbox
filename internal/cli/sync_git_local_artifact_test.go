@@ -48,7 +48,14 @@ func localSeedTestCommit(t *testing.T, root, content string, parents ...string) 
 func localSeedTestImport(t *testing.T, artifact localGitSeedArtifact) string {
 	t.Helper()
 	root := localSeedTestRepo(t, artifact.ObjectFormat)
+	if len(artifact.Shallow) > 0 {
+		// The Box writes the shallow file before verifying or importing the bundle.
+		if err := os.WriteFile(filepath.Join(root, ".git", "shallow"), []byte(strings.Join(artifact.Shallow, "\n")+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	localSeedTestGit(t, root, "", "bundle", "verify", artifact.Path)
+	localSeedTestGit(t, root, "", "bundle", "unbundle", artifact.Path)
 	localSeedTestGit(t, root, "", "fetch", artifact.Path, "+refs/*:refs/*")
 	localSeedTestGit(t, root, "", "fsck", "--full", "--strict")
 	return root
@@ -165,7 +172,89 @@ func TestLocalGitSeedArtifactSupportsLinkedWorktreesAndLocalAlternates(t *testin
 	}
 }
 
-func TestLocalGitSeedArtifactRequiresActualClosureDespiteShallowAndPartialMarkers(t *testing.T) {
+func localSeedTestChain(t *testing.T, root string, n int) (string, string) {
+	t.Helper()
+	var head, tree string
+	for i := 0; i < n; i++ {
+		var parents []string
+		if head != "" {
+			parents = []string{head}
+		}
+		head, tree, _ = localSeedTestCommit(t, root, "commit "+strconv.Itoa(i)+strings.Repeat("x", 4096), parents...)
+	}
+	localSeedTestGit(t, root, "", "update-ref", "refs/heads/main", head)
+	return head, tree
+}
+
+func TestLocalGitSeedArtifactShallowSourceFallsBackToDepthOne(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			full := localSeedTestRepo(t, format)
+			localSeedTestChain(t, full, 3)
+			clone := filepath.Join(t.TempDir(), "clone")
+			localSeedTestGit(t, full, "", "-c", "protocol.file.allow=always", "clone", "--depth", "1", "file://"+full, clone)
+			head := localSeedTestGit(t, clone, "", "rev-parse", "HEAD")
+			tree := localSeedTestGit(t, clone, "", "rev-parse", "HEAD^{tree}")
+			localSeedTestGit(t, clone, "", "tag", "light", head)
+			artifact, err := prepareLocalGitSeedArtifact(context.Background(), clone, localGitSeedSelection{Head: head, Tree: tree}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer artifact.cleanup()
+			if !reflect.DeepEqual(artifact.Shallow, []string{head}) {
+				t.Fatalf("shallow %v", artifact.Shallow)
+			}
+			imported := localSeedTestImport(t, artifact)
+			if got := localSeedTestGit(t, imported, "", "rev-parse", "refs/crabbox/local-head^{tree}"); got != tree {
+				t.Fatalf("tree %s != %s", got, tree)
+			}
+			if got := localSeedTestGit(t, imported, "", "rev-parse", "--is-shallow-repository"); got != "true" {
+				t.Fatalf("shallow repository: %s", got)
+			}
+			if got := localSeedTestGit(t, imported, "", "rev-list", "--count", head); got != "1" {
+				t.Fatalf("history not truncated: %s", got)
+			}
+		})
+	}
+}
+
+func TestLocalGitSeedArtifactOverCapFallsBackToDepthOne(t *testing.T) {
+	root := localSeedTestRepo(t, "sha1")
+	head, tree := localSeedTestChain(t, root, 6)
+	complete, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer complete.cleanup()
+	if len(complete.Shallow) != 0 {
+		t.Fatalf("complete history marked shallow: %v", complete.Shallow)
+	}
+	limit := complete.ObjectBytes - 1
+	if complete.PackedBytes > limit {
+		limit = complete.PackedBytes - 1
+	}
+	artifact, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.cleanup()
+	if !reflect.DeepEqual(artifact.Shallow, []string{head}) {
+		t.Fatalf("shallow %v", artifact.Shallow)
+	}
+	imported := localSeedTestImport(t, artifact)
+	if got := localSeedTestGit(t, imported, "", "rev-parse", "refs/crabbox/local-head^{tree}"); got != tree {
+		t.Fatalf("tree %s != %s", got, tree)
+	}
+	if got := localSeedTestGit(t, imported, "", "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("shallow repository: %s", got)
+	}
+	if limited, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 8); err == nil {
+		_ = limited.cleanup()
+		t.Fatal("HEAD tree over the cap must still fail")
+	}
+}
+
+func TestLocalGitSeedArtifactShallowMarkerOnCompleteRepoKeepsHistory(t *testing.T) {
 	root := localSeedTestRepo(t, "sha1")
 	parent, _, _ := localSeedTestCommit(t, root, "parent")
 	head, tree, _ := localSeedTestCommit(t, root, "child", parent)
@@ -182,7 +271,10 @@ func TestLocalGitSeedArtifactRequiresActualClosureDespiteShallowAndPartialMarker
 	}
 	imported := localSeedTestImport(t, artifact)
 	if got := localSeedTestGit(t, imported, "", "rev-list", "--count", head); got != "2" {
-		t.Fatalf("shallow marker truncated closure: %s", got)
+		t.Fatalf("shallow marker truncated a complete closure: %s", got)
+	}
+	if len(artifact.Shallow) != 0 {
+		t.Fatalf("complete history marked shallow: %v", artifact.Shallow)
 	}
 	if err := artifact.cleanup(); err != nil {
 		t.Fatal(err)
@@ -190,13 +282,20 @@ func TestLocalGitSeedArtifactRequiresActualClosureDespiteShallowAndPartialMarker
 	if err := os.Remove(filepath.Join(root, ".git", "objects", parent[:2], parent[2:])); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 0); err == nil || !strings.Contains(err.Error(), "required local Git object") {
-		t.Fatalf("missing actual parent: %v", err)
+	artifact, err = prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 0)
+	if err != nil {
+		t.Fatalf("shallow marker with missing parent: %v", err)
 	}
+	defer artifact.cleanup()
+	if !reflect.DeepEqual(artifact.Shallow, []string{head}) {
+		t.Fatalf("shallow %v", artifact.Shallow)
+	}
+	// Without a shallow marker a missing parent is corruption, not a shallow source.
 	if err := os.Remove(filepath.Join(root, ".git", "shallow")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 0); err == nil || !strings.Contains(err.Error(), "required local Git object") || strings.Contains(err.Error(), "shallow") {
+	if broken, err := prepareLocalGitSeedArtifact(context.Background(), root, localGitSeedSelection{Head: head, Tree: tree}, 0); err == nil || !strings.Contains(err.Error(), "required local Git object") || strings.Contains(err.Error(), "shallow") {
+		_ = broken.cleanup()
 		t.Fatalf("non-shallow missing parent: %v", err)
 	}
 }
@@ -211,7 +310,14 @@ func TestLocalGitSeedArtifactNamesShallowSourceCause(t *testing.T) {
 	if got := localSeedTestGit(t, clone, "", "rev-parse", "--is-shallow-repository"); got != "true" {
 		t.Fatalf("fixture is not shallow: %s", got)
 	}
-	_, err := prepareLocalGitSeedArtifact(context.Background(), clone, localGitSeedSelection{Head: head, Tree: tree}, 0)
+	artifact, err := prepareLocalGitSeedArtifact(context.Background(), clone, localGitSeedSelection{Head: head, Tree: tree}, 0)
+	if err != nil || !reflect.DeepEqual(artifact.Shallow, []string{head}) {
+		t.Fatalf("shallow source depth-1 seed=%v err=%v", artifact.Shallow, err)
+	}
+	if err := artifact.cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = prepareLocalGitSeedArtifact(context.Background(), clone, localGitSeedSelection{Head: head, Tree: tree}, 1)
 	if err == nil || !strings.Contains(err.Error(), "required local Git object") || !strings.Contains(err.Error(), "source repository is shallow") || !strings.Contains(err.Error(), "git fetch --unshallow") {
 		t.Fatalf("shallow source error=%v", err)
 	}
