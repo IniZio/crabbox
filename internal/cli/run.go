@@ -47,6 +47,17 @@ func applyServerTypeFlagOverrides(cfg *Config, fs *flag.FlagSet, serverType stri
 	}
 }
 
+// warmupReadyLine appends workdir only when `crabbox run` would derive it from
+// the lease and repo name. An Actions runner can adopt a different workspace
+// later, so that path is left out rather than guessed.
+func warmupReadyLine(cfg Config, user string, target SSHTarget, network NetworkMode, leaseID, repoName string, actionsRunner bool) string {
+	line := fmt.Sprintf("ready ssh=%s@%s:%s network=%s workroot=%s", user, target.Host, target.Port, network, cfg.WorkRoot)
+	if !actionsRunner {
+		line += " workdir=" + remoteJoin(cfg, leaseID, repoName)
+	}
+	return line
+}
+
 func (a App) warmup(ctx context.Context, args []string) error {
 	return a.warmupWithLeaseObserver(ctx, args, nil)
 }
@@ -207,7 +218,7 @@ func (a App) warmupWithLeaseObserver(ctx context.Context, args []string, observe
 		tailscaleSummary = " tailscale=" + blank(tailscaleTargetHost(meta), blank(meta.State, "requested"))
 	}
 	fmt.Fprintf(a.Stdout, "leased %s slug=%s provider=%s server=%s type=%s ip=%s%s idle_timeout=%s expires=%s\n", leaseID, blank(ServerSlug(server), "-"), cfg.Provider, server.DisplayID(), server.ServerType.Name, server.PublicNet.IPv4.IP, tailscaleSummary, cfg.IdleTimeout, blank(LeaseLabelTimeDisplay(server.Labels["expires_at"]), server.Labels["expires_at"]))
-	fmt.Fprintf(a.Stdout, "ready ssh=%s@%s:%s network=%s workroot=%s\n", redactedSSHUser(cfg, server, target), target.Host, target.Port, network, cfg.WorkRoot)
+	fmt.Fprintln(a.Stdout, warmupReadyLine(cfg, redactedSSHUser(cfg, server, target), target, network, leaseID, repo.Name, *actionsRunner))
 	a.startRegisteredWebVNCDaemonBestEffort(ctx, cfg, target, leaseID, *keep)
 	if *actionsRunner {
 		ghRepo, err := resolveGitHubRepo(repo, cfg.Actions.Repo)
