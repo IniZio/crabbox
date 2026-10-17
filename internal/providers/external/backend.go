@@ -96,14 +96,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 	}
 	if err != nil {
-		if !req.Keep {
+		if !retainReservationOnFailure {
 			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, response.Lease))
 		}
 		return core.LeaseTarget{}, err
 	}
 	lease, err := response.Lease.pinnedTarget(b.cfg, req.Keep)
 	if err != nil {
-		if !req.Keep {
+		if !retainReservationOnFailure {
 			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, response.Lease))
 		}
 		return core.LeaseTarget{}, err
@@ -124,14 +124,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 	}
 	if err := validateLease(lease, true, true); err != nil {
-		if !req.Keep {
+		if !retainReservationOnFailure {
 			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, err
 	}
 	if _, err := core.PersistValidatedExternalRouting(lease.LeaseID, b.cfg.External); err != nil {
 		var acquireErr error = core.Exit(2, "%v", err)
-		if !req.Keep {
+		if !retainReservationOnFailure {
 			acquireErr = appendAcquireCleanupError(acquireErr, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, acquireErr
