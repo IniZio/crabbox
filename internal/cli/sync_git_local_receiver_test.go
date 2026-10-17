@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func localReceiverFixture(t *testing.T, objectFormats ...string) (gitLocalSeedPlan, []byte, string) {
@@ -489,6 +490,80 @@ func TestGitLocalReceiverPreservesUnownedRepository(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(workdir, ".git/HEAD"))
 	if err != nil || !bytes.Equal(got, head) {
 		t.Fatalf("unowned HEAD changed: %q %v", got, err)
+	}
+}
+
+func TestGitLocalReceiverRecoversEmptyOwnerFromPreviousBoot(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	owner := filepath.Join(workdir, ".git/crabbox-local-owner")
+	if err := os.Truncate(owner, 0); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1000, 0)
+	if err := os.Chtimes(owner, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data); err != nil {
+		t.Fatalf("empty pre-boot owner not reseeded: %v\n%s", err, out)
+	}
+	if got, err := os.ReadFile(owner); err != nil || string(got) != "crabbox-local-seed-v1" {
+		t.Fatalf("owner not restored: %q %v", got, err)
+	}
+}
+
+func TestGitLocalReceiverKeepsOwnershipFailureForUnprovenOwners(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	old := time.Unix(1000, 0)
+	for _, scenario := range []string{"recent-empty", "old-symlink", "missing", "old-garbage"} {
+		t.Run(scenario, func(t *testing.T) {
+			workdir := t.TempDir()
+			requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+			owner := filepath.Join(workdir, ".git/crabbox-local-owner")
+			switch scenario {
+			case "recent-empty":
+				if err := os.Truncate(owner, 0); err != nil {
+					t.Fatal(err)
+				}
+			case "old-symlink":
+				if err := os.Remove(owner); err != nil {
+					t.Fatal(err)
+				}
+				empty := filepath.Join(workdir, "empty")
+				mustWriteTestFile(t, empty, "")
+				if err := os.Symlink(empty, owner); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(empty, old, old); err != nil {
+					t.Fatal(err)
+				}
+			case "missing":
+				if err := os.Remove(owner); err != nil {
+					t.Fatal(err)
+				}
+			case "old-garbage":
+				mustWriteTestFile(t, owner, "something-else")
+				if err := os.Chtimes(owner, old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out, err := runLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data); err == nil || !bytes.Contains(out, []byte("ownership failed")) {
+				t.Fatalf("unproven owner accepted: %q %v", out, err)
+			}
+		})
+	}
+}
+
+func TestGitLocalReceiverSyncsBeforePublishAndBackupRemoval(t *testing.T) {
+	plan, _, _ := localReceiverFixture(t)
+	script := remoteGitLocalSeed(t.TempDir(), plan)
+	syncFresh := strings.Index(script, `sync -f "$fresh"`)
+	publish := strings.Index(script, `mv -- "$fresh" "$metadata"`)
+	syncPublished := strings.Index(script, `sync -f "$metadata"`)
+	remove := strings.Index(script, `rm -rf -- "$backup"`)
+	if syncFresh < 0 || publish < 0 || syncPublished < 0 || remove < 0 || syncFresh > publish || syncPublished < publish || syncPublished > remove {
+		t.Fatalf("sync not ordered around publish/backup removal: %d %d %d %d", syncFresh, publish, syncPublished, remove)
 	}
 }
 
