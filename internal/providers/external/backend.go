@@ -631,6 +631,15 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		failure, _ := err.(*procjson.Failure)
 		if failure != nil && failure.Stage == procjson.StageRun {
 			message := strings.TrimSpace(core.Blank(strings.TrimSpace(result.Stderr), result.Stdout))
+			var failed protocolResponse
+			if json.Unmarshal([]byte(result.Stdout), &failed) == nil {
+				if providerMessage := strings.TrimSpace(failed.Error); providerMessage != "" {
+					message = providerMessage
+					if tail := stderrTail(result.Stderr); tail != "" {
+						message += ": " + tail
+					}
+				}
+			}
 			code := result.ExitCode
 			if code == 0 {
 				code = 5
