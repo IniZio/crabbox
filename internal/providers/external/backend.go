@@ -350,6 +350,9 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 	if req.ReleaseOnly {
 		return lease, nil
 	}
+	if !req.StatusOnly && providerLeaseSuspended(lease.Server.Status) {
+		return core.LeaseTarget{}, core.Exit(4, "external provider lease %s is %s; resume or stop it (crabbox stop --id %s)", lease.LeaseID, lease.Server.Status, lease.LeaseID)
+	}
 	if !req.NoLocalStateMutations {
 		if _, err := core.PersistValidatedExternalRouting(lease.LeaseID, b.cfg.External); err != nil {
 			return core.LeaseTarget{}, core.Exit(2, "%v", err)
@@ -368,6 +371,14 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		}
 	}
 	return lease, nil
+}
+
+func providerLeaseSuspended(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "paused", "stopped", "released":
+		return true
+	}
+	return false
 }
 
 func (b *leaseBackend) List(ctx context.Context, req core.ListRequest) ([]core.LeaseView, error) {
