@@ -903,3 +903,52 @@ func TestGitLocalReceiverWindowsRejectsShallow(t *testing.T) {
 		}
 	}
 }
+
+func TestGitLocalReceiverSweepsStagingFromPreviousBoot(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	workdir := t.TempDir()
+	stale := filepath.Join(workdir, ".crabbox-local-git.AbCd1234")
+	recent := filepath.Join(workdir, ".crabbox-local-git.WxYz5678")
+	target := filepath.Join(workdir, "target")
+	link := filepath.Join(workdir, ".crabbox-local-git.LiNk0000")
+	oddName := filepath.Join(workdir, ".crabbox-local-git.AbCd-123")
+	for _, dir := range []string{stale, recent, target, oddName} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1000, 0)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{target, oddName} {
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setLinkMtime(t, link, 1000)
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatalf("pre-boot staging kept: %v", err)
+	}
+	for _, kept := range []string{recent, link, target, oddName} {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Fatalf("live-looking path removed: %v", err)
+		}
+	}
+}
+
+func TestGitLocalReceiverHidesStagingFromStatus(t *testing.T) {
+	plan, data, _ := localReceiverFixture(t)
+	workdir := t.TempDir()
+	requireLocalReceiver(t, remoteGitLocalSeed(workdir, plan), data)
+	requireLocalReceiver(t, remoteGitLocalSeedFinalize(workdir, plan), nil)
+	leftover := filepath.Join(workdir, ".crabbox-local-git.AbCd1234")
+	mustWriteTestFile(t, filepath.Join(leftover, "payload.bundle"), "x\n")
+	if out := gitOutput(workdir, "status", "--porcelain", "--untracked-files=all"); strings.Contains(out, ".crabbox-local-git") {
+		t.Fatalf("staging listed as work: %q", out)
+	}
+}
