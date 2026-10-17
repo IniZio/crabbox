@@ -116,8 +116,10 @@ the Crabbox config file. Generated SSH, retry, and stop commands store resolved
 command, arguments, and config in a private per-lease routing file and print
 only that file's opaque path. Kept acquisition failures persist this routing
 before the SSH readiness wait, so the printed recovery commands can still
-resolve or release the lease. Routing files use mode `0600` and are removed
-after successful release. Persistence flushes the private temporary file before
+resolve or release the lease. An acquire that fails before routing is saved
+releases the lease even with `--keep`, unless a lease ID was requested. Routing
+files use mode `0600` and are removed after successful release. Persistence
+flushes the private temporary file before
 rename, then flushes the installed directory and its complete ancestor chain;
 a sync failure is reported and a retry repeats the entire durability chain.
 Confirmed-absence cleanup likewise flushes the containing directories after
