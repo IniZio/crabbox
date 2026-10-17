@@ -228,6 +228,14 @@ if [ -e "$metadata" ] || [ -L "$metadata" ]; then
   owned_metadata || ownership_fail
   rm -f -- "$metadata/crabbox-local-complete" "$metadata/crabbox/sync-fingerprint" || fail
 fi
+# A killed guest loses the staging removal; only earlier boots can own these.
+swept=
+for old in "$workdir"/.crabbox-local-git.????????; do
+  case "${old#"$workdir"/.crabbox-local-git.}" in *[!A-Za-z0-9]*) continue ;; esac
+  [ -d "$old" ] && [ ! -L "$old" ] && owner_file_predates_boot "$old" || continue
+  rm -rf -- "$old" && swept=1
+done
+[ -z "$swept" ] || sync -f "$workdir" 2>/dev/null || sync || true
 stage="$(mktemp -d "$workdir/.crabbox-local-git.XXXXXXXX")" || fail
 bundle="$stage/payload.bundle"
 phase=receive
@@ -246,7 +254,7 @@ plain_git init --quiet --template= --object-format="$expected_format" "$stage/re
 mv -- "$stage/repo/.git" "$fresh" || fail
 plain_git --git-dir="$fresh" config core.logAllRefUpdates false >/dev/null 2>&1 || fail
 mkdir -p -- "$fresh/info" || fail
-printf '%%s\n.crabbox/\n' "$exclude_lines" > "$fresh/info/exclude" || fail
+printf '%%s\n.crabbox/\n/.crabbox-local-git.*/\n' "$exclude_lines" > "$fresh/info/exclude" || fail
 phase=verify-bundle
 # Git must see the shallow boundary before any step that walks history.
 if [ -n "$expected_shallow" ]; then
