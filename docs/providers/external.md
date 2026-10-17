@@ -558,6 +558,11 @@ Successful lease response:
 }
 ```
 
+When `resolve` returns `status` of `paused`, `stopped`, or `released` (any
+case), Crabbox stops at once with exit code 4 and a `crabbox stop --id <id>`
+hint, unless the request is `releaseOnly` or `statusOnly`. Other statuses, such
+as `starting`, still wait for SSH.
+
 `sshConfigProxy: true` supports an SSH alias already installed in the user's
 SSH config. `proxyCommand` supports control-plane tunnels directly. Either path
 is automatically reused by rsync and WebVNC. A non-empty `proxyCommand` implies
