@@ -621,7 +621,7 @@ func TestWorkspaceOwnerWSL2WatchdogPreservesIntentionalBackgroundWitness(t *test
 				t.Fatal(err)
 			}
 			lines := strings.Split(strings.TrimSpace(string(witness)), "\n")
-			if len(lines) != 2 {
+			if !workspaceOwnerLayoutHasBootID(lines, 2) {
 				t.Fatalf("child witness=%q", witness)
 			}
 			pid, err := strconv.Atoi(lines[0])

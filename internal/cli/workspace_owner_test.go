@@ -417,6 +417,137 @@ func TestWorkspaceOwnerCrashRecoveryHonorsWitnessedChild(t *testing.T) {
 	}
 }
 
+// workspaceOwnerLayoutHasBootID checks a state or witness file written by the
+// real script: base lines, plus the current boot id when the host exposes one.
+func workspaceOwnerLayoutHasBootID(lines []string, base int) bool {
+	raw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return len(lines) >= base && len(lines) <= base+1
+	}
+	return len(lines) == base+1 && lines[base] == strings.TrimSpace(string(raw))
+}
+
+func TestWorkspaceOwnerPOSIXRecoversAcrossGuestReboot(t *testing.T) {
+	bootRaw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if runtime.GOOS != "linux" || err != nil {
+		t.Skip("requires Linux boot_id")
+	}
+	currentBoot := strings.TrimSpace(string(bootRaw))
+	const foreignBoot = "11111111-2222-3333-4444-555555555555"
+	token := strings.Repeat("a", 64)
+	expired := strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)
+	live := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	const longAgo = 10 * 365 * 24 * time.Hour
+	// A nil child means no .child file; owner and child are written with the
+	// given age so tests can place them before or after the current boot.
+	acquire := func(t *testing.T, owner string, child *string, age time.Duration) (string, error) {
+		t.Helper()
+		home := t.TempDir()
+		key := workspaceOwnerKey("cbx_boot")
+		root := filepath.Join(home, ".crabbox", "workspace-owners")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		write := func(path, content string) {
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			when := time.Now().Add(-age)
+			if err := os.Chtimes(path, when, when); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write(filepath.Join(root, key+".owner"), owner)
+		if child != nil {
+			write(filepath.Join(root, key+".child"), *child)
+		}
+		req := workspaceOwnerRemoteRequest{Action: workspaceOwnerAcquire, Key: key, Token: strings.Repeat("b", 64), TTL: 30 * time.Second}
+		return runPOSIXWorkspaceOwnerScript(t, home, remoteWorkspaceOwnerPOSIX(req))
+	}
+	ownerFile := func(expiry, boot string) string {
+		out := "v1\n" + token + "\n" + expiry + "\n"
+		if boot != "" {
+			out += boot + "\n"
+		}
+		return out
+	}
+	str := func(s string) *string { return &s }
+	// liveChild records the test process with its real identity and the given boot id.
+	liveChild := func(t *testing.T, boot string) *string {
+		t.Helper()
+		self := strconv.Itoa(os.Getpid())
+		identity, err := exec.Command("sh", "-c", "ps -o lstart= -p "+self+" | tr -s ' ' | sed 's/^ //;s/ $//' | cut -c1-96").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return str(self + "\n" + strings.TrimSpace(string(identity)) + "\n" + boot + "\n")
+	}
+	requireAmbiguous := func(t *testing.T, out string, err error) {
+		t.Helper()
+		var exitErr *exec.ExitError
+		if out != "AMBIGUOUS" || !errors.As(err, &exitErr) || exitErr.ExitCode() != 74 {
+			t.Fatalf("out=%q err=%v, want AMBIGUOUS exit 74", out, err)
+		}
+	}
+	requireOut := func(t *testing.T, want, out string, err error) {
+		t.Helper()
+		if err != nil || out != want {
+			t.Fatalf("out=%q err=%v, want %s", out, err, want)
+		}
+	}
+
+	t.Run("owner from another boot is recovered", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, foreignBoot), str("1\ndummy\n"+foreignBoot+"\n"), 0)
+		requireOut(t, "RECOVERED", out, err)
+	})
+	t.Run("owner from another boot is recovered despite legacy child", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(live, foreignBoot), str("1\ndummy\n"), 0)
+		requireOut(t, "RECOVERED", out, err)
+	})
+	t.Run("child from another boot with live pid is recovered", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, currentBoot), liveChild(t, foreignBoot), 0)
+		requireOut(t, "RECOVERED", out, err)
+	})
+	t.Run("acquire records the boot id", func(t *testing.T) {
+		home := t.TempDir()
+		key := workspaceOwnerKey("cbx_boot")
+		req := workspaceOwnerRemoteRequest{Action: workspaceOwnerAcquire, Key: key, Token: token, TTL: 30 * time.Second}
+		out, err := runPOSIXWorkspaceOwnerScript(t, home, remoteWorkspaceOwnerPOSIX(req))
+		requireOut(t, "ACQUIRED", out, err)
+		data, err := os.ReadFile(filepath.Join(home, ".crabbox", "workspace-owners", key+".owner"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lines := strings.Split(strings.TrimSpace(string(data)), "\n"); !workspaceOwnerLayoutHasBootID(lines, 3) {
+			t.Fatalf("owner state=%q, want boot id %s", data, currentBoot)
+		}
+	})
+	t.Run("current boot with live child stays CHILD", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, currentBoot), liveChild(t, currentBoot), 0)
+		requireOut(t, "CHILD", out, err)
+	})
+	t.Run("legacy child without boot id stays ambiguous", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, ""), str("1\ndummy\n"), 0)
+		requireAmbiguous(t, out, err)
+	})
+	t.Run("empty child older than boot is recovered", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, currentBoot), str(""), longAgo)
+		requireOut(t, "RECOVERED", out, err)
+	})
+	t.Run("empty child newer than boot stays ambiguous", func(t *testing.T) {
+		out, err := acquire(t, ownerFile(expired, currentBoot), str(""), 0)
+		requireAmbiguous(t, out, err)
+	})
+	t.Run("empty owner older than boot is recovered", func(t *testing.T) {
+		out, err := acquire(t, "", nil, longAgo)
+		requireOut(t, "RECOVERED", out, err)
+	})
+	t.Run("empty owner newer than boot stays ambiguous", func(t *testing.T) {
+		out, err := acquire(t, "", nil, 0)
+		requireAmbiguous(t, out, err)
+	})
+}
+
 func TestWorkspaceOwnerTokenAndTransportFailuresFailClosed(t *testing.T) {
 	t.Run("token mismatch", func(t *testing.T) {
 		remote := newFakeWorkspaceOwnerRemote()
