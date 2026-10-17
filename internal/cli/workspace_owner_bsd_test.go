@@ -948,7 +948,7 @@ i=0; while [ "$i" -lt 5 ]; do echo tick; sleep 1; i=$((i+1)); done; exit 23`, co
 					t.Fatal(err)
 				}
 				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-				if len(lines) != 3 || lines[0] != "v1" || lines[1] != token {
+				if (path == os.Getenv("PATH") && !workspaceOwnerLayoutHasBootID(lines, 3)) || (path != os.Getenv("PATH") && len(lines) != 3) || lines[0] != "v1" || lines[1] != token {
 					t.Fatalf("unexpected owner state %q", data)
 				}
 				expiry, err := strconv.Atoi(lines[2])

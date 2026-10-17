@@ -786,6 +786,30 @@ return 1
 }
 `
 
+// Boot identity separates a recorded owner from a previous guest boot, whose
+// PIDs and start times no longer mean anything.
+const workspaceOwnerPOSIXBoot = `owner_boot_id_valid() {
+printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+}
+owner_boot_id() {
+[ -r /proc/sys/kernel/random/boot_id ] || return 1
+boot_id_now=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || return 1
+owner_boot_id_valid "$boot_id_now" || return 1
+printf '%s\n' "$boot_id_now"
+}
+owner_file_predates_boot() {
+boot_time=$(awk '$1 == "btime" { print $2 }' /proc/stat 2>/dev/null) || return 1
+case "$boot_time" in ''|*[!0-9]*) return 1 ;; esac
+file_mtime=$(stat -c %Y "$1" 2>/dev/null) || return 1
+case "$file_mtime" in ''|*[!0-9]*) return 1 ;; esac
+[ "$file_mtime" -lt "$boot_time" ]
+}
+owner_unreadable_status() {
+if owner_file_predates_boot "$1"; then return 1; fi
+return 2
+}
+`
+
 // The directory gate is deliberately never stolen on a timeout: a suspended
 // writer can resume after its deadline. Ambiguous gates require lease cleanup.
 // BusyBox retries lock the same inode and execute the body once, independently
@@ -833,7 +857,7 @@ func workspaceOwnerPOSIXGate(timeout string) string {
 
 func remoteWorkspaceOwnerPOSIX(req workspaceOwnerRemoteRequest) string {
 	body := `set -eu
-` + workspaceOwnerPOSIXProcess + `
+` + workspaceOwnerPOSIXProcess + workspaceOwnerPOSIXBoot + `
 root="$HOME/.crabbox/workspace-owners"
 key=` + shellQuote(req.Key) + `
 token=` + shellQuote(req.Token) + `
@@ -848,30 +872,46 @@ read_state() {
   state_version=$(sed -n '1p' "$state" 2>/dev/null || true)
   state_token=$(sed -n '2p' "$state" 2>/dev/null || true)
   state_expiry=$(sed -n '3p' "$state" 2>/dev/null || true)
+  state_boot=$(sed -n '4p' "$state" 2>/dev/null || true)
   [ "$state_version" = v1 ] || return 2
   case "$state_token" in ''|*[!0-9a-f]*) return 2 ;; esac
   [ "${#state_token}" -eq 64 ] || return 2
   case "$state_expiry" in ''|*[!0-9]*) return 2 ;; esac
+  [ -z "$state_boot" ] || owner_boot_id_valid "$state_boot" || return 2
   return 0
 }
 write_state() {
   next_expiry=$(($(date +%s) + ttl))
   tmp="$state.tmp.$$"
-  (umask 077; printf 'v1\n%s\n%s\n' "$token" "$next_expiry" >"$tmp")
+  next_boot=$(owner_boot_id 2>/dev/null || true)
+  (umask 077; { printf 'v1\n%s\n%s\n' "$token" "$next_expiry"; [ -z "$next_boot" ] || printf '%s\n' "$next_boot"; } >"$tmp")
   mv "$tmp" "$state"
 }
 child_status() {
   [ -f "$child" ] || return 1
   child_pid=$(sed -n '1p' "$child" 2>/dev/null || true)
   child_identity=$(sed -n '2p' "$child" 2>/dev/null || true)
-  case "$child_pid" in ''|*[!0-9]*) return 2 ;; esac
-  [ -n "$child_identity" ] && [ "${#child_identity}" -le 96 ] || return 2
+  child_boot=$(sed -n '3p' "$child" 2>/dev/null || true)
+  if [ -n "$child_boot" ]; then
+    owner_boot_id_valid "$child_boot" || { owner_unreadable_status "$child"; return; }
+    current_boot=$(owner_boot_id 2>/dev/null || true)
+    [ -z "$current_boot" ] || [ "$child_boot" = "$current_boot" ] || return 1
+  fi
+  case "$child_pid" in ''|*[!0-9]*) owner_unreadable_status "$child"; return ;; esac
+  if [ -z "$child_identity" ] || [ "${#child_identity}" -gt 96 ]; then owner_unreadable_status "$child"; return; fi
   owner_process_status "$child_pid" "$child_identity"
 }
 case "$action" in
   acquire)
     if read_state; then
       now=$(date +%s)
+      current_boot=$(owner_boot_id 2>/dev/null || true)
+      if [ -n "$state_boot" ] && [ -n "$current_boot" ] && [ "$state_boot" != "$current_boot" ]; then
+        rm -f "$child"
+        write_state
+        printf RECOVERED
+        exit 0
+      fi
       if [ "$state_expiry" -gt "$now" ]; then printf BUSY; exit 0; fi
       if child_status; then printf CHILD; exit 0; else child_rc=$?; fi
       if [ "$child_rc" -eq 2 ]; then printf AMBIGUOUS; exit 74; fi
@@ -880,6 +920,12 @@ case "$action" in
       printf RECOVERED
       exit 0
     else state_rc=$?; fi
+    if [ "$state_rc" -eq 2 ] && owner_file_predates_boot "$state"; then
+      rm -f "$child"
+      write_state
+      printf RECOVERED
+      exit 0
+    fi
     if [ "$state_rc" -eq 2 ]; then printf AMBIGUOUS; exit 74; fi
     [ ! -e "$state" ] || { printf AMBIGUOUS; exit 74; }
     write_state
@@ -1113,30 +1159,31 @@ func remoteWorkspaceOwnerPOSIXWitnessScript(key, token, remote, setupMarker stri
 	gateFunction := workspaceOwnerPOSIXGate("5")
 	installBody := `set -eu
 ` + workspaceOwnerPOSIXProcess + `
-[ "$(sed -n '2p' "$state" 2>/dev/null || true)" = "$token" ] || exit 75
-owner_expiry=$(sed -n '3p' "$state" 2>/dev/null || true)
-case "$owner_expiry" in ''|*[!0-9]*) exit 74 ;; esac
+[ "$(sed -n 2p "$state" 2>/dev/null || true)" = "$token" ] || exit 75
+owner_expiry=$(sed -n 3p "$state" 2>/dev/null || true)
+case "$owner_expiry" in ""|*[!0-9]*) exit 74 ;; esac
 [ "$owner_expiry" -gt "$(date +%s)" ] || exit 75
 kill -0 "$child_pid" 2>/dev/null || exit 74
 live_child_identity=$(ps -o lstart= -p "$child_pid" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//' | cut -c1-96)
 [ -n "$live_child_identity" ] && [ "$live_child_identity" = "$child_identity" ] || exit 74
 if [ -f "$child" ]; then
-existing_pid=$(sed -n '1p' "$child" 2>/dev/null || true)
-existing_identity=$(sed -n '2p' "$child" 2>/dev/null || true)
-case "$existing_pid" in ''|*[!0-9]*) exit 74 ;; esac
+existing_pid=$(sed -n 1p "$child" 2>/dev/null || true)
+existing_identity=$(sed -n 2p "$child" 2>/dev/null || true)
+case "$existing_pid" in ""|*[!0-9]*) exit 74 ;; esac
 [ -n "$existing_identity" ] && [ "${#existing_identity}" -le 96 ] || exit 74
 if owner_process_status "$existing_pid" "$existing_identity"; then exit 75; else existing_rc=$?; fi
 [ "$existing_rc" -ne 2 ] || exit 74
 rm -f "$child"
 fi
 child_tmp="$child.tmp.$$"
-(umask 077; printf '%s\n%s\n' "$child_pid" "$child_identity" >"$child_tmp")
+child_boot=$(grep -Ex "[0-9a-f-]{36}" /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+(umask 077; printf "%s\n%s\n%s\n" "$child_pid" "$child_identity" "$child_boot" >"$child_tmp")
 mv "$child_tmp" "$child"`
 	clearBody := `set -eu
 ` + workspaceOwnerPOSIXProcess + `
-[ "$(sed -n '2p' "$state" 2>/dev/null || true)" = "$token" ] || exit 75
-recorded_pid=$(sed -n '1p' "$child" 2>/dev/null || true)
-recorded_identity=$(sed -n '2p' "$child" 2>/dev/null || true)
+[ "$(sed -n 2p "$state" 2>/dev/null || true)" = "$token" ] || exit 75
+recorded_pid=$(sed -n 1p "$child" 2>/dev/null || true)
+recorded_identity=$(sed -n 2p "$child" 2>/dev/null || true)
 [ "$recorded_pid" = "$child_pid" ] && [ "$recorded_identity" = "$child_identity" ] || exit 74
 if owner_process_status "$recorded_pid" "$recorded_identity"; then exit 74; else recorded_rc=$?; fi
 [ "$recorded_rc" -ne 2 ] || exit 74
