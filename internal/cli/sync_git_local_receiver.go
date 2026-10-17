@@ -137,6 +137,7 @@ stage=
 backup=
 finalizing=
 phase=prepare
+recover_owner=
 fail() { echo "local Git seed: $phase failed" >&2; exit 67; }
 ownership_fail() {
   echo "local Git seed: ownership failed; existing Git metadata is not owned by local seeding. Use --full-resync only if you intend to replace this workspace." >&2
@@ -184,7 +185,10 @@ owned_metadata() {
   [ -d "$metadata" ] && [ ! -L "$metadata" ] || return 1
   [ -f "$metadata/crabbox-local-owner" ] && [ ! -L "$metadata/crabbox-local-owner" ] || return 1
   owner="$(cat "$metadata/crabbox-local-owner")" || return 1
-  [ "$owner" = crabbox-local-seed-v1 ] || return 1
+  if [ "$owner" != crabbox-local-seed-v1 ]; then
+    # A crash before the owner write reached disk leaves an empty marker from a previous boot.
+    [ -n "$recover_owner" ] && [ ! -s "$metadata/crabbox-local-owner" ] && owner_file_predates_boot "$metadata/crabbox-local-owner" || return 1
+  fi
   # This directory belongs to the local receiver, never a source repository.
   links="$(find -P "$metadata" -type l -print -quit)" || return 1
   [ -z "$links" ] || return 1
@@ -218,7 +222,8 @@ EOF
 }
 `
 	if action == "import" {
-		script += fmt.Sprintf(`phase=ownership
+		script += workspaceOwnerPOSIXBoot + fmt.Sprintf(`recover_owner=1
+phase=ownership
 if [ -e "$metadata" ] || [ -L "$metadata" ]; then
   owned_metadata || ownership_fail
   rm -f -- "$metadata/crabbox-local-complete" "$metadata/crabbox/sync-fingerprint" || fail
@@ -261,8 +266,9 @@ $bundle_refs
 EOF
 plain_git --git-dir="$fresh" update-ref --no-deref HEAD "$expected_head" >/dev/null 2>&1 || fail
 plain_git --git-dir="$fresh" read-tree "$expected_head" >/dev/null 2>&1 || fail
-printf 'crabbox-local-seed-v1' > "$fresh/crabbox-local-owner"
-printf '%%s' "$expected_digest" > "$fresh/crabbox-local-artifact"
+printf 'crabbox-local-seed-v1' > "$fresh/crabbox-local-owner" || fail
+printf '%%s' "$expected_digest" > "$fresh/crabbox-local-artifact" || fail
+sync -f "$fresh" 2>/dev/null || sync || fail
 metadata="$fresh"
 phase=verify-metadata
 verify_metadata || fail
@@ -291,6 +297,7 @@ if ! mv -- "$fresh" "$metadata"; then
   if [ -n "$backup" ] && mv -- "$backup" "$metadata"; then backup=; fi
   fail
 fi
+sync -f "$metadata" 2>/dev/null || sync || fail
 if [ -n "$backup" ]; then
   if ! rm -rf -- "$backup"; then
     # Keep the stage locator if removal could not complete.
