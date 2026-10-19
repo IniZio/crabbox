@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- CI: make Blacksmith's buffered artifact-timeout regression deterministic under scheduler pressure without changing production timeouts or workload results. [PR 2909](https://github.com/openclaw/crabbox/pull/2909).
 - Config: protect persisted Windows credentials with a verified current-user-only DACL before writing, without inheriting parent read grants. [PR 2901](https://github.com/openclaw/crabbox/pull/2901). Thanks @coygeek.
 - Freestyle: create and resume VMs through the current Freestyle API contract, validating readiness for stopped or paused creation responses. [PR 2897](https://github.com/openclaw/crabbox/pull/2897). Thanks @coygeek.
 - Coordinator: revoke non-admin control sessions after shared-token rotation or GitHub authorization withdrawal, including restored sessions, event delivery, and queued heartbeats. [PR 2907](https://github.com/openclaw/crabbox/pull/2907). Thanks @coygeek.
