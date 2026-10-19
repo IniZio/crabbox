@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Freestyle: report commands whose exec response has no exit status (timeouts) as failures instead of success, keeping output and failure retention. [PR 2896](https://github.com/openclaw/crabbox/pull/2896). Thanks @coygeek.
 - Tests: preserve literal SSH username and transport coverage across OpenSSH parser versions, including clients that reject combined backslash/percent usernames. [PR 2904](https://github.com/openclaw/crabbox/pull/2904). Thanks @coygeek.
 - Windows Sandbox: stop only captured run-owned process identities during cleanup, preserve replacement sessions, and report unconfirmed ownership. [PR 2906](https://github.com/openclaw/crabbox/pull/2906). Thanks @coygeek.
 - AWS: release deletes the lease key pair only by its recorded immutable key-pair ID and skips replacement keys registered under the reused name, explaining every skip. [PR 2890](https://github.com/openclaw/crabbox/pull/2890). Thanks @goutamadwant and @coygeek.
