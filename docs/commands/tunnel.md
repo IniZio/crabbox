@@ -41,7 +41,11 @@ loopback only (`ssh -N -o ExitOnForwardFailure=yes -R
 
 `--reverse <boxport>:<socket path>` forwards each connection to a Unix socket
 on this machine instead (`ssh -R 127.0.0.1:<boxport>:<socket path>`). The path
-must be absolute and at most 103 bytes, the macOS limit. The socket can be
+must be absolute and at most 103 bytes, the macOS limit. It must not contain
+`:`, `%`, `$`, control characters (newline, tab), or leading or trailing
+whitespace. `ssh -R` splits its spec on `:` and expands `%` tokens and `${VAR}`
+in the path, so those characters would bind a different path than the one
+printed. Spaces inside the path are allowed. The socket can be
 missing when the tunnel starts. The ssh client connects to the socket only
 when a Box connection arrives, so the running tunnel reaches a server that
 binds the same path again. On this machine, only users who can open the socket
@@ -60,9 +64,9 @@ SIGTERM, or context cancellation, which reaps the SSH process group. With
 `{"box":18080,"socket":"/tmp/app-1000/front.sock"}` for a socket; otherwise
 `box 127.0.0.1:18080 -> host 127.0.0.1:9000` or
 `box 127.0.0.1:18080 -> host /tmp/app-1000/front.sock`. Both ports must be in
-1..65535. A relative socket path or one over 103 bytes is also a usage error
-(exit 2). If the Box port is not ready within 15 seconds the command exits 5
-with a redacted diagnostic.
+1..65535. A socket path that is relative, over 103 bytes, or contains a
+character listed above is also a usage error (exit 2). If the Box port is not
+ready within 15 seconds the command exits 5 with a redacted diagnostic.
 
 ## Flags
 
