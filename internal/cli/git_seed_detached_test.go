@@ -22,12 +22,19 @@ func TestRunDetachedGitSeedPreservesManifestAuthority(t *testing.T) {
 		t.Skip("rsync unavailable")
 	}
 	for _, tc := range []struct {
-		name                                                        string
-		published, checksum, delete, missingGit, githubSSH, hydrate bool
+		name                                                            string
+		published, checksum, delete, missingGit, githubSSH, hydrate     bool
+		localBase, explicit, unavailableBase, manyExcluded, dropPublish bool
 	}{
 		{name: "unpublished-warm", delete: true, hydrate: true},
 		{name: "unpublished-hydration", delete: true, hydrate: true},
-		{name: "unpublished-explicit", delete: true, hydrate: true},
+		{name: "unpublished-explicit", delete: true, hydrate: true, explicit: true},
+		{name: "local-base-script", delete: true, hydrate: true, localBase: true},
+		{name: "local-base-many-exclusions", delete: true, hydrate: true, localBase: true, manyExcluded: true},
+		{name: "local-base-retry-exclusions", delete: true, hydrate: true, localBase: true, manyExcluded: true, dropPublish: true},
+		{name: "local-base-explicit", delete: true, hydrate: true, localBase: true, explicit: true},
+		{name: "local-base-no-hydrate", delete: true, localBase: true},
+		{name: "local-base-unavailable", delete: true, hydrate: true, localBase: true, unavailableBase: true},
 		{name: "published-hydration", published: true, delete: true, hydrate: true},
 		{name: "published-checksum", published: true, checksum: true, delete: true},
 		{name: "published-delta", published: true, delete: true},
@@ -40,6 +47,15 @@ func TestRunDetachedGitSeedPreservesManifestAuthority(t *testing.T) {
 			clearConfigEnv(t)
 			f := newGitCoherenceFixture(t)
 			runGit(t, f.source, "checkout", "--quiet", "--detach", f.b)
+			if tc.manyExcluded {
+				for index := range 200 {
+					mustWriteTestFile(t, filepath.Join(f.source, "other", fmt.Sprintf("public-%03d.txt", index)), "excluded published bytes\n")
+				}
+				runGit(t, f.source, "add", "other")
+				runGit(t, f.source, "commit", "-qm", "published excluded files")
+				f.b = gitOutput(f.source, "rev-parse", "HEAD")
+				runGit(t, f.source, "push", "--quiet", "origin", "HEAD:refs/heads/fixture-base")
+			}
 			payload := strings.Repeat("unchanged seed payload\n", 32768)
 			mustWriteTestFile(t, filepath.Join(f.source, "payload.txt"), payload)
 			runGit(t, f.source, "add", "payload.txt")
@@ -52,6 +68,21 @@ func TestRunDetachedGitSeedPreservesManifestAuthority(t *testing.T) {
 			}
 			runGit(t, f.source, "commit", "-qm", "detached CI commit")
 			head := gitOutput(f.source, "rev-parse", "HEAD")
+			if tc.localBase {
+				// Match a detached source mirror: borrowed objects, one local base
+				// ref, and an origin URL without any fetched tracking refs.
+				mirror := t.TempDir()
+				runGit(t, mirror, "init", "--quiet", "--template=")
+				objects := gitOutput(f.source, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+				mustWriteTestFile(t, filepath.Join(mirror, ".git/objects/info/alternates"), objects+"\n")
+				runGit(t, mirror, "update-ref", "--no-deref", "HEAD", head)
+				runGit(t, mirror, "update-ref", "refs/heads/main", f.b)
+				runGit(t, mirror, "read-tree", "--reset", "-u", head)
+				runGit(t, mirror, "remote", "add", "origin", f.origin)
+				f.source = mirror
+				requireGitOutput(t, f.source, "", "for-each-ref", "refs/remotes/origin")
+				requireGitOutput(t, f.source, f.b, "merge-base", "HEAD", "main")
+			}
 			if tc.published {
 				runGit(t, f.source, "push", "--quiet", "origin", "HEAD:refs/pull/12/merge")
 			}
@@ -82,7 +113,11 @@ func TestRunDetachedGitSeedPreservesManifestAuthority(t *testing.T) {
 			remoteRoot := filepath.Join(root, "remote")
 			workdir := filepath.Join(remoteRoot, "cbx_detached_seed", repo.Name)
 			configPath := filepath.Join(root, "config.yaml")
-			mustWriteTestFile(t, configPath, fmt.Sprintf("workRoot: %q\nsync:\n  checksum: %t\n  delete: %t\n  exclude:\n    - other\n", remoteRoot, tc.checksum, tc.delete))
+			baseRef := "main"
+			if tc.unavailableBase {
+				baseRef = "unavailable"
+			}
+			mustWriteTestFile(t, configPath, fmt.Sprintf("workRoot: %q\nsync:\n  checksum: %t\n  delete: %t\n  baseRef: %s\n  exclude:\n    - other\n", remoteRoot, tc.checksum, tc.delete, baseRef))
 			if tc.hydrate {
 				workflow := `on:
   workflow_dispatch:
@@ -136,6 +171,20 @@ fi
 # Substitute only the public network destination with the fixture's Git mirror.
 # Planning, seed publication, file transfer and the Git-root guard execute normally.
 remote="${1//https:\/\/github.com\/example-org\/project.git/$CRABBOX_SEED_ORIGIN}"
+if [ "$CRABBOX_SEED_DROP_PUBLISH" = true ] && [ ! -f "$CRABBOX_SEED_DROP_FILE" ]; then
+  case "$probe" in
+    *"crabbox-git-seed phase=prerequisite"*)
+      /bin/bash --noprofile --norc -c "$remote" > "$CRABBOX_SEED_DROP_FILE.output"
+      result=$?
+      cat "$CRABBOX_SEED_DROP_FILE.output"
+      if [ "$result" = 0 ] && grep -Fxq 'crabbox-git-seed published' "$CRABBOX_SEED_DROP_FILE.output"; then
+        touch "$CRABBOX_SEED_DROP_FILE"
+        exit 255
+      fi
+      exit "$result"
+      ;;
+  esac
+fi
 exec /bin/bash --noprofile --norc -c "$remote"
 `)
 			if tc.hydrate {
@@ -178,6 +227,8 @@ exec ` + shellQuote(realRsync) + ` "${args[@]}"
 			}
 			beforeRsync := filepath.Join(root, "seed-before-rsync")
 			t.Setenv("CRABBOX_SEED_BEFORE_RSYNC", beforeRsync)
+			t.Setenv("CRABBOX_SEED_DROP_PUBLISH", fmt.Sprint(tc.dropPublish))
+			t.Setenv("CRABBOX_SEED_DROP_FILE", filepath.Join(root, "dropped-publication"))
 			t.Setenv("CRABBOX_SEED_MISSING_GIT", fmt.Sprint(tc.missingGit))
 			t.Setenv("CRABBOX_SEED_ORIGIN", f.origin)
 			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -206,14 +257,46 @@ exec ` + shellQuote(realRsync) + ` "${args[@]}"
 				runGit(t, f.source, "checkout", "--quiet", "--detach", head)
 				args = append([]string{"--id", "cbx_detached_seed", "--stop-after", "always"}, args...)
 			}
-			if tc.name == "unpublished-explicit" {
+			if tc.localBase && tc.hydrate {
+				script := filepath.Join(root, "workload.sh")
+				mustWriteTestFile(t, script, "test -f hydration-proof && printf workload-reached\n")
+				args = []string{"--provider", providerName, "--debug", "--script", script}
+			}
+			if tc.explicit {
 				if err := app.actionsHydrate(t.Context(), []string{"--provider", providerName, "--id", "cbx_detached_seed"}); err != nil {
 					t.Fatalf("explicit hydration: %v\n%s", err, stderr.String())
 				}
+				if tc.localBase {
+					cfg := baseConfig()
+					cfg.Sync.BaseRef = "main"
+					target := SSHTarget{User: "crabbox", Host: "127.0.0.1", Port: "22", TargetOS: targetLinux, SSHConfigProxy: true}
+					fresh, err := app.seedLocalActionsAncestor(t.Context(), cfg, repo, target, workdir)
+					if err != nil || fresh {
+						t.Fatalf("existing workspace reported fresh publication: fresh=%t err=%v", fresh, err)
+					}
+				}
 				args = append([]string{"--id", "cbx_detached_seed", "--stop-after", "always"}, args...)
 			}
-			if err := app.runCommand(context.Background(), args); err != nil {
+			err = app.runCommand(context.Background(), args)
+			if tc.unavailableBase {
+				if err == nil || !strings.Contains(err.Error(), "cannot verify Actions workspace Git root and origin") || strings.Contains(stdout.String(), "workload-reached") {
+					t.Fatalf("unavailable base admitted workload: err=%v stdout=%s", err, stdout.String())
+				}
+				if _, err := os.Lstat(filepath.Join(workdir, ".git")); !os.IsNotExist(err) {
+					t.Fatalf("unavailable base published Git metadata: %v", err)
+				}
+				requireGitOutput(t, f.source, sourceIndex, "write-tree")
+				requireGitOutput(t, f.source, refsBefore, "show-ref")
+				requireGitOutput(t, f.source, head, "rev-parse", "HEAD")
+				return
+			}
+			if err != nil {
 				t.Fatalf("sync: %v\n%s\n%s", err, stdout.String(), stderr.String())
+			}
+			if tc.dropPublish {
+				if _, err := os.Stat(filepath.Join(root, "dropped-publication")); err != nil {
+					t.Fatalf("publication transport failure was not exercised: %v", err)
+				}
 			}
 			seeded, err := os.ReadFile(beforeRsync)
 			if err != nil {
@@ -224,7 +307,7 @@ exec ` + shellQuote(realRsync) + ` "${args[@]}"
 				if gitOutput(workdir, "cat-file", "-t", head) != "" {
 					t.Fatal("private Git history was transferred")
 				}
-				if tc.name == "unpublished-hydration" && !strings.Contains(stderr.String(), "local Actions Git baseline="+f.b) {
+				if (tc.name == "unpublished-hydration" || tc.localBase) && !strings.Contains(stderr.String(), "local Actions Git baseline="+f.b) {
 					t.Fatal("baseline identity was not reported")
 				}
 				if !strings.Contains(stdout.String(), "workload-reached") {
@@ -269,6 +352,11 @@ exec ` + shellQuote(realRsync) + ` "${args[@]}"
 			for _, name := range []string{"deleted.txt", "other/omit.txt", "other/private.txt", ".git/crabbox/sync-fingerprint"} {
 				if _, err := os.Lstat(filepath.Join(workdir, name)); !os.IsNotExist(err) {
 					t.Fatalf("unexpected remote path %s: %v", name, err)
+				}
+			}
+			if tc.manyExcluded {
+				if _, err := os.Lstat(filepath.Join(workdir, "other")); !os.IsNotExist(err) {
+					t.Fatalf("excluded published files remain: %v", err)
 				}
 			}
 			if tc.hydrate {
