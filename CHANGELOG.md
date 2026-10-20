@@ -8,6 +8,7 @@
 - Warmup: add provider-neutral `--egress-allow` (`CRABBOX_EGRESS_ALLOW`) mapped to the allow-list of providers that enforce one; providers that cannot enforce one reject it.
 - Stop: add `--delete` to delete instead of pausing or retaining the box on providers that keep released boxes.
 - Providers: add `egress-allow`, `egress-allow-create-only`, `native-sleep` and `resume-rotates-host-key` feature tokens; Sprites reports `native-sleep` and Namespace devbox reports `resume-rotates-host-key`.
+- Tunnel: `crabbox tunnel --reverse <boxport>:<absolute socket path>` forwards the Box port to a host Unix socket; `--json` prints `{"box":N,"socket":"<path>"}`.
 
 ### Fixes
 
