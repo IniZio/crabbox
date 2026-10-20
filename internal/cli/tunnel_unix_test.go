@@ -140,29 +140,35 @@ esac
 
 func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
 	for _, tc := range []struct {
-		name, hostEnd, forward, ready string
+		name, hostEnd, forward, json, plain string
 	}{
-		{"port", "9000", "-R 127.0.0.1:18080:127.0.0.1:9000 ", `{"box":18080,"host":9000}`},
-		{"socket", "/tmp/moor-1000/px-0123456789abcdef", "-R 127.0.0.1:18080:/tmp/moor-1000/px-0123456789abcdef ", `{"box":18080,"socket":"/tmp/moor-1000/px-0123456789abcdef"}`},
+		{"port", "9000", "-R 127.0.0.1:18080:127.0.0.1:9000 ", `{"box":18080,"host":9000}`, "box 127.0.0.1:18080 -> host 127.0.0.1:9000"},
+		{"socket", "/tmp/moor-1000/px-0123456789abcdef", "-R 127.0.0.1:18080:/tmp/moor-1000/px-0123456789abcdef ", `{"box":18080,"socket":"/tmp/moor-1000/px-0123456789abcdef"}`, "box 127.0.0.1:18080 -> host /tmp/moor-1000/px-0123456789abcdef"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			boxPort, host, err := parseTunnelReverse("18080:" + tc.hostEnd)
-			if err != nil {
-				t.Fatal(err)
+		for _, asJSON := range []bool{true, false} {
+			ready, format := tc.plain, "plain"
+			if asJSON {
+				ready, format = tc.json, "json"
 			}
-			testSSHReverseForwardLifecycle(t, boxPort, host, tc.forward, tc.ready)
-		})
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				boxPort, host, err := parseTunnelReverse("18080:" + tc.hostEnd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				testSSHReverseForwardLifecycle(t, boxPort, host, asJSON, tc.forward, ready)
+			})
+		}
 	}
 }
 
-func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTunnelHost, forward, ready string) {
+func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTunnelHost, asJSON bool, forward, ready string) {
 	dir := writeFakeReverseSSH(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stdout := newSynchronizedBuffer(0)
 	done := make(chan error, 1)
 	go func() {
-		done <- runSSHReverseForward(ctx, SSHTarget{User: "alice", Host: "example.test", Port: "22", DisableHostKeyChecking: true}, boxPort, host, true, &stdout, 10*time.Second)
+		done <- runSSHReverseForward(ctx, SSHTarget{User: "alice", Host: "example.test", Port: "22", DisableHostKeyChecking: true}, boxPort, host, asJSON, &stdout, 10*time.Second)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	if got := stdout.String(); got != "" {
