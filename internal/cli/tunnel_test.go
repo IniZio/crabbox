@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -146,7 +147,21 @@ func TestSSHReverseTunnelSessionIsNotMultiplexed(t *testing.T) {
 }
 
 func TestTunnelReverseUsageErrors(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(config, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRABBOX_CONFIG", config)
+	t.Setenv("CRABBOX_PROVIDER", "")
 	app := App{Stdout: io.Discard, Stderr: io.Discard}
+	// Valid arguments stop later, at provider selection; a usage error must stop first.
+	control := app.tunnel(t.Context(), []string{"--id", "box", "--reverse", "8080:9000"})
+	if control == nil {
+		t.Fatal("tunnel unexpectedly succeeded without a provider")
+	}
+	if err := app.tunnel(t.Context(), []string{"--id", "box", "--reverse", "8080:/tmp/px.sock"}); err == nil || err.Error() != control.Error() {
+		t.Fatalf("socket form err=%v, want it to pass argument checks like %v", err, control)
+	}
 	for _, args := range [][]string{
 		{"--id", "box", "--reverse", "0:9000"},
 		{"--id", "box", "--reverse", "8080"},
@@ -159,8 +174,8 @@ func TestTunnelReverseUsageErrors(t *testing.T) {
 	} {
 		err := app.tunnel(t.Context(), args)
 		var exitErr ExitError
-		if err == nil || !AsExitError(err, &exitErr) || exitErr.Code != 2 {
-			t.Fatalf("args=%v err=%v, want exit 2", args, err)
+		if err == nil || !AsExitError(err, &exitErr) || exitErr.Code != 2 || err.Error() == control.Error() {
+			t.Fatalf("args=%v err=%v, want an exit 2 usage error before provider selection", args, err)
 		}
 	}
 }
