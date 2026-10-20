@@ -8,6 +8,7 @@
 - Stop: add `--delete` to delete instead of pausing or retaining the box on providers that keep released boxes.
 - Providers: report `egress-allow`, `egress-allow-create-only`, `native-sleep` and `resume-rotates-host-key` features.
 - Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
+- Tunnel: `crabbox tunnel --reverse <boxport>:<absolute socket path>` forwards the Box port to a host Unix socket; `--json` prints `{"box":N,"socket":"<path>"}`.
 - AWS Windows images: enable guarded Server 2025 bakes from stock with source-only OS selection, guest-version proof, and matching Server Core containers; explicit Server 2022 leases retain stock selection. [Issue 2717](https://github.com/openclaw/crabbox/issues/2717). Thanks @saftall.
 
 ### Fixes

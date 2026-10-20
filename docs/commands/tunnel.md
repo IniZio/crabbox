@@ -39,26 +39,42 @@ loopback only (`ssh -N -o ExitOnForwardFailure=yes -R
 127.0.0.1:<boxport>:127.0.0.1:<hostport>`); there is no positional port and no
 `--local-port`.
 
+`--reverse <boxport>:<socket path>` forwards each connection to a Unix socket
+on this machine instead (`ssh -R 127.0.0.1:<boxport>:<socket path>`). The path
+must be absolute and at most 103 bytes, the macOS limit. It must not contain
+`:`, `%`, `$`, control characters (newline, tab), or leading or trailing
+whitespace. `ssh -R` splits its spec on `:` and expands `%` tokens and `${VAR}`
+in the path, so those characters would bind a different path than the one
+printed. Spaces inside the path are allowed. The socket can be
+missing when the tunnel starts. The ssh client connects to the socket only
+when a Box connection arrives, so the running tunnel reaches a server that
+binds the same path again. On this machine, only users who can open the socket
+file can connect to it. Put it in a directory that only you can enter.
+
 ```sh
 crabbox tunnel --id blue-box --reverse 18080:9000 --json
+crabbox tunnel --id blue-box --reverse 18080:/tmp/app-1000/front.sock --json
 ```
 
 The reverse forward uses its own non-multiplexed SSH session. Readiness is an
 SSH exec probe confirming the Box port accepts a connection; until then
 nothing is printed. After that it prints one line and blocks until Ctrl-C,
 SIGTERM, or context cancellation, which reaps the SSH process group. With
-`--json` the line is `{"box":18080,"host":9000}`; otherwise
-`box 127.0.0.1:18080 -> host 127.0.0.1:9000`. Both ports must be in 1..65535
-(usage error, exit 2). If the Box port is not ready within 15 seconds the
-command exits 5 with a redacted diagnostic.
+`--json` the line is `{"box":18080,"host":9000}`, or
+`{"box":18080,"socket":"/tmp/app-1000/front.sock"}` for a socket; otherwise
+`box 127.0.0.1:18080 -> host 127.0.0.1:9000` or
+`box 127.0.0.1:18080 -> host /tmp/app-1000/front.sock`. Both ports must be in
+1..65535. A socket path that is relative, over 103 bytes, or contains a
+character listed above is also a usage error (exit 2). If the Box port is not
+ready within 15 seconds the command exits 5 with a redacted diagnostic.
 
 ## Flags
 
 ```text
 --id <lease-id-or-slug>   required lease identifier
 --local-port <port>       local loopback port; omit or use 0 for automatic
---reverse <box>:<host>    expose host loopback port <host> on the Box's <box>
---json                    with --reverse, print {"box":N,"host":N} when ready
+--reverse <box>:<host>    expose host loopback port or absolute socket path <host> on the Box's <box>
+--json                    with --reverse, print {"box":N,"host":N} or {"box":N,"socket":"<path>"} when ready
 --provider <name>         provider selection
 --network <mode>          auto, public, or tailscale target resolution
 --reclaim                 claim the lease for the current repository

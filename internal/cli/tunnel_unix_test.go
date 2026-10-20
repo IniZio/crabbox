@@ -139,13 +139,36 @@ esac
 }
 
 func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name, hostEnd, forward, json, plain string
+	}{
+		{"port", "9000", "-R 127.0.0.1:18080:127.0.0.1:9000 ", `{"box":18080,"host":9000}`, "box 127.0.0.1:18080 -> host 127.0.0.1:9000"},
+		{"socket", "/tmp/moor-1000/px-0123456789abcdef", "-R 127.0.0.1:18080:/tmp/moor-1000/px-0123456789abcdef ", `{"box":18080,"socket":"/tmp/moor-1000/px-0123456789abcdef"}`, "box 127.0.0.1:18080 -> host /tmp/moor-1000/px-0123456789abcdef"},
+	} {
+		for _, asJSON := range []bool{true, false} {
+			ready, format := tc.plain, "plain"
+			if asJSON {
+				ready, format = tc.json, "json"
+			}
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				boxPort, host, err := parseTunnelReverse("18080:" + tc.hostEnd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				testSSHReverseForwardLifecycle(t, boxPort, host, asJSON, tc.forward, ready)
+			})
+		}
+	}
+}
+
+func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTunnelHost, asJSON bool, forward, ready string) {
 	dir := writeFakeReverseSSH(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stdout := newSynchronizedBuffer(0)
 	done := make(chan error, 1)
 	go func() {
-		done <- runSSHReverseForward(ctx, SSHTarget{User: "alice", Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", "9000", true, &stdout, 10*time.Second)
+		done <- runSSHReverseForward(ctx, SSHTarget{User: "alice", Host: "example.test", Port: "22", DisableHostKeyChecking: true}, boxPort, host, asJSON, &stdout, 10*time.Second)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	if got := stdout.String(); got != "" {
@@ -155,12 +178,12 @@ func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
 	for stdout.String() == "" && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != `{"box":18080,"host":9000}` {
-		t.Fatalf("ready output=%q", got)
+	if got := strings.TrimSpace(stdout.String()); got != ready {
+		t.Fatalf("ready output=%q, want %q", got, ready)
 	}
 	argv, err := os.ReadFile(filepath.Join(dir, "argv"))
-	if err != nil || !strings.Contains(string(argv), "-N -o ExitOnForwardFailure=yes -R 127.0.0.1:18080:127.0.0.1:9000") {
-		t.Fatalf("argv=%q err=%v", argv, err)
+	if err != nil || !strings.Contains(string(argv), "-N -o ExitOnForwardFailure=yes "+forward) {
+		t.Fatalf("argv=%q err=%v, want %q", argv, err, forward)
 	}
 	pids := map[string]int{}
 	for _, name := range []string{"pid", "child"} {
@@ -181,8 +204,16 @@ func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled reverse tunnel did not return")
 	}
+	// The killed child stays a zombie until its new parent reaps it, and
+	// kill(pid, 0) succeeds on a zombie, so allow the reap a few seconds.
+	reapDeadline := time.Now().Add(5 * time.Second)
 	for name, pid := range pids {
-		if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		err := syscall.Kill(pid, 0)
+		for !errors.Is(err, syscall.ESRCH) && time.Now().Before(reapDeadline) {
+			time.Sleep(20 * time.Millisecond)
+			err = syscall.Kill(pid, 0)
+		}
+		if !errors.Is(err, syscall.ESRCH) {
 			t.Fatalf("%s process %d survived cancellation: %v", name, pid, err)
 		}
 	}
@@ -191,7 +222,7 @@ func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
 func TestSSHReverseForwardTimeoutExit5Redacted(t *testing.T) {
 	writeFakeReverseSSH(t, 1<<30)
 	stdout := newSynchronizedBuffer(0)
-	err := runSSHReverseForward(t.Context(), SSHTarget{User: "secret-user", AuthSecret: true, Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", "9000", true, &stdout, 800*time.Millisecond)
+	err := runSSHReverseForward(t.Context(), SSHTarget{User: "secret-user", AuthSecret: true, Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", reverseTunnelHost{port: "9000"}, true, &stdout, 800*time.Millisecond)
 	var exitErr ExitError
 	if err == nil || !AsExitError(err, &exitErr) || exitErr.Code != 5 {
 		t.Fatalf("err=%v, want exit 5", err)
