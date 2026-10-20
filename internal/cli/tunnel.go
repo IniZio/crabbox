@@ -25,21 +25,22 @@ func (a App) tunnel(ctx context.Context, args []string) error {
 	id := fs.String("id", "", "lease id or slug")
 	reclaim := fs.Bool("reclaim", false, "claim this lease for the current repo")
 	localPort := fs.String("local-port", "", "local loopback port; omit or use 0 to choose an available port")
-	reverse := fs.String("reverse", "", "expose host loopback port on the box: <boxport>:<hostport>")
-	jsonOut := fs.Bool("json", false, "print reverse tunnel readiness as JSON {box,host}")
+	reverse := fs.String("reverse", "", "expose a host loopback port or Unix socket on the box: <boxport>:<hostport> or <boxport>:<absolute socket path>")
+	jsonOut := fs.Bool("json", false, "print reverse tunnel readiness as JSON {box,host} or {box,socket}")
 	providerFlags := registerProviderFlags(fs, defaults)
 	targetFlags := registerTargetFlags(fs, defaults)
 	networkFlags := registerNetworkModeFlag(fs, defaults)
 	if err := parseInterspersedFlags(fs, args); err != nil {
 		return err
 	}
-	var remotePort, requestedLocalPort, boxPort, hostPort string
+	var remotePort, requestedLocalPort, boxPort string
+	var reverseHost reverseTunnelHost
 	var err error
 	if *reverse != "" {
 		if strings.TrimSpace(*id) == "" || fs.NArg() != 0 || *localPort != "" {
-			return Exit(2, "usage: crabbox tunnel --id <lease-id-or-slug> --reverse <boxport>:<hostport> [--json]")
+			return Exit(2, "usage: crabbox tunnel --id <lease-id-or-slug> --reverse <boxport>:<hostport|socket path> [--json]")
 		}
-		if boxPort, hostPort, err = parseTunnelReverse(*reverse); err != nil {
+		if boxPort, reverseHost, err = parseTunnelReverse(*reverse); err != nil {
 			return err
 		}
 	} else {
@@ -73,7 +74,7 @@ func (a App) tunnel(ctx context.Context, args []string) error {
 	stopActivity := a.startInteractiveSSHLeaseActivity(ctx, cfg, lease)
 	defer stopActivity()
 	if *reverse != "" {
-		return runSSHReverseForward(ctx, lease.SSH, boxPort, hostPort, *jsonOut, a.Stdout, sshTunnelReadyTimeout)
+		return runSSHReverseForward(ctx, lease.SSH, boxPort, reverseHost, *jsonOut, a.Stdout, sshTunnelReadyTimeout)
 	}
 	return runSSHLocalForward(ctx, lease.SSH, requestedLocalPort, remotePort, a.Stdout)
 }
