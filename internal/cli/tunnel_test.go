@@ -94,6 +94,8 @@ func TestParseTunnelReverse(t *testing.T) {
 		"18080:9000": {port: "9000"},
 		"18080:/tmp/moor-1000/px-0123456789abcdef": {socket: "/tmp/moor-1000/px-0123456789abcdef"},
 		"18080:" + longest:                         {socket: longest},
+		"18080:/tmp/my dir/px.sock":                {socket: "/tmp/my dir/px.sock"},
+		" 18080 : 9000 ":                           {port: "9000"},
 	} {
 		box, host, err := parseTunnelReverse(value)
 		if err != nil || box != "18080" || host != want {
@@ -101,12 +103,30 @@ func TestParseTunnelReverse(t *testing.T) {
 		}
 	}
 	tooLong := longest + "s"
-	for _, value := range []string{"", "9000", "0:9000", "9000:0", "x:1", "1:x", "65536:1", "1:65536", "1:2:3", ":", "1:px.sock", "1:./px.sock", "1:moor/px.sock", "1:" + tooLong, "0:/tmp/px.sock"} {
+	for _, value := range append(unsafeReverseSocketSpecs(), "", "9000", "0:9000", "9000:0", "x:1", "1:x", "65536:1", "1:65536", "1:2:3", ":", "1:px.sock", "1:./px.sock", "1:moor/px.sock", "1:"+tooLong, "0:/tmp/px.sock") {
 		_, _, err := parseTunnelReverse(value)
 		var exitErr ExitError
 		if err == nil || !AsExitError(err, &exitErr) || exitErr.Code != 2 {
 			t.Fatalf("parse %q err=%v, want exit 2", value, err)
 		}
+	}
+}
+
+// unsafeReverseSocketSpecs lists socket paths that ssh would split, expand or
+// bind differently from the path the command prints.
+func unsafeReverseSocketSpecs() []string {
+	return []string{
+		"1:/tmp/a:80",
+		"1:/tmp/a:b.sock",
+		"1:/tmp/%u.sock",
+		"1:/tmp/px%.sock",
+		"1:/tmp/${HOME}/px.sock",
+		"1:/tmp/$HOME.sock",
+		"1:/tmp/px\n.sock",
+		"1:/tmp/px\t.sock",
+		"1:/tmp/px.sock\n",
+		"1:/tmp/px.sock ",
+		"1: /tmp/px.sock",
 	}
 }
 
@@ -169,6 +189,13 @@ func TestTunnelReverseUsageErrors(t *testing.T) {
 		{"--id", "box", "--reverse", "8080:9000", "--local-port", "1"},
 		{"--id", "box", "--reverse", "8080:px.sock"},
 		{"--id", "box", "--reverse", "8080:/" + strings.Repeat("s", 103)},
+		{"--id", "box", "--reverse", "8080:/tmp/a:80"},
+		{"--id", "box", "--reverse", "8080:/tmp/a:b.sock"},
+		{"--id", "box", "--reverse", "8080:/tmp/%u.sock"},
+		{"--id", "box", "--reverse", "8080:/tmp/${HOME}/px.sock"},
+		{"--id", "box", "--reverse", "8080:/tmp/px\n.sock"},
+		{"--id", "box", "--reverse", "8080:/tmp/px\t.sock"},
+		{"--id", "box", "--reverse", "8080:/tmp/px.sock "},
 		{"--reverse", "8080:9000"},
 		{"--id", "box", "--json", "3000"},
 	} {

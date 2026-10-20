@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // maxReverseSocketPathBytes leaves room for the NUL in macOS's 104-byte sun_path.
@@ -36,8 +37,10 @@ type sshReverseForwardReady struct {
 }
 
 // parseTunnelReverse parses "<boxport>:<hostport>" or "<boxport>:<socket path>".
+// The value is not trimmed as a whole, because trailing whitespace belongs to
+// a socket path. The port parser trims each port on its own.
 func parseTunnelReverse(value string) (string, reverseTunnelHost, error) {
-	boxPort, hostEnd, ok := strings.Cut(strings.TrimSpace(value), ":")
+	boxPort, hostEnd, ok := strings.Cut(value, ":")
 	if !ok {
 		return "", reverseTunnelHost{}, Exit(2, "--reverse must be <boxport>:<hostport> or <boxport>:<socket path>")
 	}
@@ -51,10 +54,32 @@ func parseTunnelReverse(value string) (string, reverseTunnelHost, error) {
 	if !strings.HasPrefix(hostEnd, "/") {
 		return "", reverseTunnelHost{}, Exit(2, "host end must be a TCP port in 1..65535 or an absolute socket path")
 	}
-	if len(hostEnd) > maxReverseSocketPathBytes {
-		return "", reverseTunnelHost{}, Exit(2, "host socket path must be at most %d bytes", maxReverseSocketPathBytes)
+	if err := checkReverseSocketPath(hostEnd); err != nil {
+		return "", reverseTunnelHost{}, err
 	}
 	return box, reverseTunnelHost{socket: hostEnd}, nil
+}
+
+// checkReverseSocketPath accepts only paths that ssh binds exactly as written.
+// ssh -R splits its spec on ':' and expands '%' tokens and '${VAR}' in the
+// socket path, so any of those would bind a different path than the one printed.
+func checkReverseSocketPath(path string) error {
+	if len(path) > maxReverseSocketPathBytes {
+		return Exit(2, "host socket path must be at most %d bytes", maxReverseSocketPathBytes)
+	}
+	if strings.ContainsRune(path, ':') {
+		return Exit(2, "host socket path must not contain ':'")
+	}
+	if strings.ContainsAny(path, "%$") {
+		return Exit(2, "host socket path must not contain '%%' or '$'")
+	}
+	if strings.IndexFunc(path, unicode.IsControl) >= 0 {
+		return Exit(2, "host socket path must not contain control characters")
+	}
+	if strings.TrimSpace(path) != path {
+		return Exit(2, "host socket path must not end with whitespace")
+	}
+	return nil
 }
 
 func resolvedSSHReverseTunnelArgs(session *sshTransportSession, boxPort string, host reverseTunnelHost) []string {
