@@ -198,8 +198,16 @@ func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTu
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled reverse tunnel did not return")
 	}
+	// The killed child stays a zombie until its new parent reaps it, and
+	// kill(pid, 0) succeeds on a zombie, so allow the reap a few seconds.
+	reapDeadline := time.Now().Add(5 * time.Second)
 	for name, pid := range pids {
-		if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		err := syscall.Kill(pid, 0)
+		for !errors.Is(err, syscall.ESRCH) && time.Now().Before(reapDeadline) {
+			time.Sleep(20 * time.Millisecond)
+			err = syscall.Kill(pid, 0)
+		}
+		if !errors.Is(err, syscall.ESRCH) {
 			t.Fatalf("%s process %d survived cancellation: %v", name, pid, err)
 		}
 	}
