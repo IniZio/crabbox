@@ -12,30 +12,53 @@ import (
 	"time"
 )
 
-type sshReverseForwardReady struct {
-	Box  int `json:"box"`
-	Host int `json:"host"`
+// maxReverseSocketPathBytes leaves room for the NUL in macOS's 104-byte sun_path.
+const maxReverseSocketPathBytes = 103
+
+// reverseTunnelHost is the host end of a reverse forward. Exactly one of port
+// (a loopback TCP port) or socket (an absolute Unix socket path) is set.
+type reverseTunnelHost struct {
+	port   string
+	socket string
 }
 
-// parseTunnelReverse parses "<boxport>:<hostport>"; both must be 1..65535.
-func parseTunnelReverse(value string) (string, string, error) {
-	boxPort, hostPort, ok := strings.Cut(strings.TrimSpace(value), ":")
+func (h reverseTunnelHost) String() string {
+	if h.socket != "" {
+		return h.socket
+	}
+	return net.JoinHostPort(sshTunnelLoopbackHost, h.port)
+}
+
+type sshReverseForwardReady struct {
+	Box    int    `json:"box"`
+	Host   int    `json:"host,omitempty"`
+	Socket string `json:"socket,omitempty"`
+}
+
+// parseTunnelReverse parses "<boxport>:<hostport>" or "<boxport>:<socket path>".
+func parseTunnelReverse(value string) (string, reverseTunnelHost, error) {
+	boxPort, hostEnd, ok := strings.Cut(strings.TrimSpace(value), ":")
 	if !ok {
-		return "", "", Exit(2, "--reverse must be <boxport>:<hostport>")
+		return "", reverseTunnelHost{}, Exit(2, "--reverse must be <boxport>:<hostport> or <boxport>:<socket path>")
 	}
 	box, err := parseTunnelPort(boxPort, "box port", false)
 	if err != nil {
-		return "", "", err
+		return "", reverseTunnelHost{}, err
 	}
-	host, err := parseTunnelPort(hostPort, "host port", false)
-	if err != nil {
-		return "", "", err
+	if port, err := parseTunnelPort(hostEnd, "host port", false); err == nil {
+		return box, reverseTunnelHost{port: port}, nil
 	}
-	return box, host, nil
+	if !strings.HasPrefix(hostEnd, "/") {
+		return "", reverseTunnelHost{}, Exit(2, "host end must be a TCP port in 1..65535 or an absolute socket path")
+	}
+	if len(hostEnd) > maxReverseSocketPathBytes {
+		return "", reverseTunnelHost{}, Exit(2, "host socket path must be at most %d bytes", maxReverseSocketPathBytes)
+	}
+	return box, reverseTunnelHost{socket: hostEnd}, nil
 }
 
-func resolvedSSHReverseTunnelArgs(session *sshTransportSession, boxPort, hostPort string) []string {
-	forward := net.JoinHostPort(sshTunnelLoopbackHost, boxPort) + ":" + net.JoinHostPort(sshTunnelLoopbackHost, hostPort)
+func resolvedSSHReverseTunnelArgs(session *sshTransportSession, boxPort string, host reverseTunnelHost) []string {
+	forward := net.JoinHostPort(sshTunnelLoopbackHost, boxPort) + ":" + host.String()
 	args := append([]string{}, session.commandPrefix()...)
 	return append(args, "-N", "-o", "ExitOnForwardFailure=yes", "-R", forward, session.host())
 }
@@ -54,9 +77,9 @@ func sshReverseForwardProbe(ctx context.Context, target SSHTarget, session *sshT
 	return nil
 }
 
-// runSSHReverseForward owns one non-multiplexed ssh that exposes the host's
-// loopback hostPort on the Box's loopback boxPort, until cancelled.
-func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort, hostPort string, asJSON bool, stdout anyWriter, readyTimeout time.Duration) (err error) {
+// runSSHReverseForward owns one non-multiplexed ssh that exposes the host end
+// on the Box's loopback boxPort, until cancelled.
+func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string, host reverseTunnelHost, asJSON bool, stdout anyWriter, readyTimeout time.Duration) (err error) {
 	terminationCtx, stopTerminationSignals := pondMeshTerminationContext(ctx)
 	defer stopTerminationSignals()
 	ctx = terminationCtx
@@ -69,7 +92,7 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort, hostPo
 
 	forwardCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	handle := pondMeshExecCommand(forwardCtx, target, directSSHExecutable(), resolvedSSHReverseTunnelArgs(session, boxPort, hostPort)...)
+	handle := pondMeshExecCommand(forwardCtx, target, directSSHExecutable(), resolvedSSHReverseTunnelArgs(session, boxPort, host)...)
 	output := newSynchronizedTailBuffer(failureTailLines)
 	handle.cmd.Stdout = output
 	handle.cmd.Stderr = output
@@ -118,14 +141,17 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort, hostPo
 		}
 	}
 	if asJSON {
-		box, _ := strconv.Atoi(boxPort)
-		host, _ := strconv.Atoi(hostPort)
-		if encErr := json.NewEncoder(stdout).Encode(sshReverseForwardReady{Box: box, Host: host}); encErr != nil {
+		ready := sshReverseForwardReady{Socket: host.socket}
+		ready.Box, _ = strconv.Atoi(boxPort)
+		if host.socket == "" {
+			ready.Host, _ = strconv.Atoi(host.port)
+		}
+		if encErr := json.NewEncoder(stdout).Encode(ready); encErr != nil {
 			stopAndWait()
 			return encErr
 		}
 	} else {
-		fmt.Fprintf(stdout, "box %s:%s -> host %s:%s\n", sshTunnelLoopbackHost, boxPort, sshTunnelLoopbackHost, hostPort)
+		fmt.Fprintf(stdout, "box %s:%s -> host %s\n", sshTunnelLoopbackHost, boxPort, host)
 	}
 	select {
 	case result := <-waited:
