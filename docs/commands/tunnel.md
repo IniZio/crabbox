@@ -56,9 +56,10 @@ crabbox tunnel --id blue-box --reverse 18080:9000 --json
 crabbox tunnel --id blue-box --reverse 18080:/tmp/app-1000/front.sock --json
 ```
 
-The reverse forward uses its own non-multiplexed SSH session. Readiness is an
-SSH exec probe confirming the Box port accepts a connection; until then
-nothing is printed. After that it prints one line and blocks until Ctrl-C,
+The reverse forward uses its own non-multiplexed SSH session, started with
+`-v`. Readiness is OpenSSH's own `remote forward success` reply for the Box
+port, so no extra connection is opened; until then nothing is printed. After
+that it prints one line and blocks until Ctrl-C,
 SIGTERM, or context cancellation, which reaps the SSH process group. With
 `--json` the line is `{"box":18080,"host":9000}`, or
 `{"box":18080,"socket":"/tmp/app-1000/front.sock"}` for a socket; otherwise
@@ -66,7 +67,8 @@ SIGTERM, or context cancellation, which reaps the SSH process group. With
 `box 127.0.0.1:18080 -> host /tmp/app-1000/front.sock`. Both ports must be in
 1..65535. A socket path that is relative, over 103 bytes, or contains a
 character listed above is also a usage error (exit 2). If the Box port is not
-ready within 15 seconds the command exits 5 with a redacted diagnostic.
+ready within 15 seconds, or the server sends `remote forward failure`, or SSH
+exits first, the command exits 5 with a redacted diagnostic.
 
 ## Flags
 

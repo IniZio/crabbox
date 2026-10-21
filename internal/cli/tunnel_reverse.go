@@ -1,12 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -85,21 +86,79 @@ func checkReverseSocketPath(path string) error {
 func resolvedSSHReverseTunnelArgs(session *sshTransportSession, boxPort string, host reverseTunnelHost) []string {
 	forward := net.JoinHostPort(sshTunnelLoopbackHost, boxPort) + ":" + host.String()
 	args := append([]string{}, session.commandPrefix()...)
-	return append(args, "-N", "-o", "ExitOnForwardFailure=yes", "-R", forward, session.host())
+	// -v makes ssh log the server's reply to the forward request, which is the
+	// readiness signal. It overrides the config's LogLevel.
+	return append(args, "-v", "-N", "-o", "ExitOnForwardFailure=yes", "-R", forward, session.host())
 }
 
-// sshReverseForwardProbe asks the Box whether its loopback port accepts.
-func sshReverseForwardProbe(ctx context.Context, target SSHTarget, session *sshTransportSession, boxPort string) error {
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	remote := fmt.Sprintf("bash -c 'exec 3<>/dev/tcp/%[1]s/%[2]s' 2>/dev/null || nc -z %[1]s %[2]s", sshTunnelLoopbackHost, boxPort)
-	args := append(session.commandPrefix(), "-o", "ConnectTimeout=5", session.host(), remote)
-	cmd := exec.CommandContext(probeCtx, directSSHExecutable(), args...)
-	applyTargetChildEnvironment(cmd, target)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("box port is not accepting: %w", err)
+type reverseForwardState int
+
+const (
+	reverseForwardPending reverseForwardState = iota
+	reverseForwardReady
+	reverseForwardFailed
+)
+
+// classifyReverseForwardLine reads one line of ssh -v stderr. OpenSSH logs
+// "remote forward success for: listen <host>:<port>, connect <target>" when
+// the server accepts the -R request, and "remote forward failure ..." when it
+// refuses it.
+func classifyReverseForwardLine(line, listen string) reverseForwardState {
+	line = strings.TrimPrefix(line, "debug1: ")
+	switch {
+	case strings.HasPrefix(line, "remote forward success for: listen "+listen+","):
+		return reverseForwardReady
+	case strings.HasPrefix(line, "remote forward failure for: listen "):
+		return reverseForwardFailed
 	}
-	return nil
+	return reverseForwardPending
+}
+
+// maxReverseForwardLineBytes bounds a stderr line that never ends.
+const maxReverseForwardLineBytes = 64 << 10
+
+// reverseForwardWatcher is the forward ssh's stderr. It reports the first
+// success or failure line once on outcome, and keeps every line except ssh's
+// debug lines in tail for diagnostics.
+type reverseForwardWatcher struct {
+	listen  string
+	tail    io.Writer
+	outcome chan reverseForwardState
+	partial []byte
+	decided bool
+}
+
+func newReverseForwardWatcher(listen string, tail io.Writer) *reverseForwardWatcher {
+	return &reverseForwardWatcher{listen: listen, tail: tail, outcome: make(chan reverseForwardState, 1)}
+}
+
+func (w *reverseForwardWatcher) Write(p []byte) (int, error) {
+	w.partial = append(w.partial, p...)
+	for {
+		end := bytes.IndexByte(w.partial, '\n')
+		if end < 0 {
+			break
+		}
+		w.line(string(w.partial[:end]))
+		w.partial = w.partial[end+1:]
+	}
+	if len(w.partial) > maxReverseForwardLineBytes {
+		w.line(string(w.partial))
+		w.partial = nil
+	}
+	return len(p), nil
+}
+
+func (w *reverseForwardWatcher) line(line string) {
+	line = strings.TrimRight(line, "\r")
+	state := classifyReverseForwardLine(line, w.listen)
+	if state == reverseForwardFailed || !strings.HasPrefix(line, "debug") {
+		_, _ = io.WriteString(w.tail, strings.TrimPrefix(line, "debug1: ")+"\n")
+	}
+	if state != reverseForwardPending && !w.decided {
+		w.decided = true
+		w.outcome <- state
+	}
 }
 
 // runSSHReverseForward owns one non-multiplexed ssh that exposes the host end
@@ -119,8 +178,9 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string,
 	defer cancel()
 	handle := pondMeshExecCommand(forwardCtx, target, directSSHExecutable(), resolvedSSHReverseTunnelArgs(session, boxPort, host)...)
 	output := newSynchronizedTailBuffer(failureTailLines)
+	watcher := newReverseForwardWatcher(net.JoinHostPort(sshTunnelLoopbackHost, boxPort), output)
 	handle.cmd.Stdout = output
-	handle.cmd.Stderr = output
+	handle.cmd.Stderr = watcher
 	if err := handle.Start(); err != nil {
 		return fmt.Errorf("start SSH reverse forward: %w", err)
 	}
@@ -141,28 +201,21 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string,
 
 	deadline := time.NewTimer(readyTimeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	var readinessErr error
-	for ready := false; !ready; {
-		select {
-		case result := <-waited:
-			return unexpectedSSHForwardExit(result, diagnostic())
-		case <-terminationCtx.Done():
-			return cancelledSSHForwardResult(stopAndWait())
-		case <-deadline.C:
-			result := stopAndWait()
-			if cleanupErr := cancelledSSHForwardResult(result); cleanupErr != nil {
-				return cleanupErr
-			}
-			detail := strings.TrimSpace(diagnostic())
-			if detail == "" && readinessErr != nil {
-				detail = redactSSHTransportDiagnostic(target, readinessErr.Error())
-			}
-			return Exit(5, "SSH reverse tunnel did not become ready on box %s:%s: %s", sshTunnelLoopbackHost, boxPort, tailForError(detail))
-		case <-ticker.C:
-			readinessErr = sshReverseForwardProbe(forwardCtx, target, session, boxPort)
-			ready = readinessErr == nil
+	select {
+	case result := <-waited:
+		return unexpectedSSHForwardExit(result, diagnostic())
+	case <-terminationCtx.Done():
+		return cancelledSSHForwardResult(stopAndWait())
+	case <-deadline.C:
+		result := stopAndWait()
+		if cleanupErr := cancelledSSHForwardResult(result); cleanupErr != nil {
+			return cleanupErr
+		}
+		return Exit(5, "SSH reverse tunnel did not become ready on box %s:%s: %s", sshTunnelLoopbackHost, boxPort, tailForError(strings.TrimSpace(diagnostic())))
+	case state := <-watcher.outcome:
+		if state == reverseForwardFailed {
+			stopAndWait()
+			return Exit(5, "SSH reverse tunnel was refused on box %s:%s: %s", sshTunnelLoopbackHost, boxPort, tailForError(strings.TrimSpace(diagnostic())))
 		}
 	}
 	if asJSON {
