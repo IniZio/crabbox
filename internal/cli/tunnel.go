@@ -61,7 +61,7 @@ func (a App) tunnel(ctx context.Context, args []string) error {
 	if err := applyProviderFlags(&cfg, fs, providerFlags); err != nil {
 		return err
 	}
-	lease, err := a.resolveSSHTransportLeaseTargetForRepo(ctx, &cfg, *id, false, *reclaim)
+	lease, err := a.resolveSSHTransportLeaseTargetForRepo(ctx, &cfg, *id, false, *reclaim, true)
 	if err != nil {
 		return err
 	}

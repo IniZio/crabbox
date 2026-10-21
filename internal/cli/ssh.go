@@ -573,6 +573,17 @@ func WaitForSSHReady(ctx context.Context, target *SSHTarget, stderr io.Writer, p
 	return waitForSSHReady(ctx, target, stderr, phase, timeout)
 }
 
+// WaitForSSHTransport waits like WaitForSSHReady, but its readiness command is
+// the transport probe instead of the guest tool check.
+func WaitForSSHTransport(ctx context.Context, target *SSHTarget, stderr io.Writer, phase string, timeout time.Duration) error {
+	probe := *target
+	probe.ReadyCheck = sshTransportProbeCommand(probe)
+	err := waitForSSHReady(ctx, &probe, stderr, phase, timeout)
+	probe.ReadyCheck = target.ReadyCheck
+	*target = probe
+	return err
+}
+
 func sshWaitNextAction(phase string) string {
 	switch phase {
 	case "before sync":
@@ -889,9 +900,15 @@ func (target *SSHTarget) recordPreparedEndpoint(port string) {
 	target.preparedEndpoint = net.JoinHostPort(target.Host, port)
 }
 
+// endpointPrepared reports whether a probe in this operation already reached
+// the current host and port.
+func (target SSHTarget) endpointPrepared() bool {
+	return target.preparedEndpoint != "" && target.preparedEndpoint == net.JoinHostPort(target.Host, target.Port)
+}
+
 // Port probes may retry before delivery; a delivered command must never replay.
 func resolvedSSHPortCandidates(target SSHTarget) []string {
-	if target.preparedEndpoint != "" && target.preparedEndpoint == net.JoinHostPort(target.Host, target.Port) {
+	if target.endpointPrepared() {
 		return []string{target.Port}
 	}
 	return sshPortCandidates(target.Port, target.FallbackPorts)

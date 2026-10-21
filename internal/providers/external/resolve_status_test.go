@@ -3,6 +3,8 @@ package external
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -83,5 +85,44 @@ func TestResolveStatusOnlySkipsSuspendedCheck(t *testing.T) {
 	_, err := backend.Resolve(ctx, core.ResolveRequest{ID: "cbx_000000000001", StatusOnly: true, NoLocalStateMutations: true})
 	if err == nil || strings.Contains(err.Error(), "resume or stop it") {
 		t.Fatalf("want SSH wait failure, got %v", err)
+	}
+}
+
+func TestResolveTransportOnlySkipsTheToolCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		transportOnly bool
+		want, reject  string
+	}{
+		{"transport only", true, "exit 0", "tool-check-marker"},
+		{"full", false, "tool-check-marker", "exit 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCrabboxState(t)
+			dir := t.TempDir()
+			script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"-G\" ] && exit 0; done\nprintf '%s\\n' \"$*\" >> \"" + dir + "/calls\"\n"
+			if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			reply := `{"protocolVersion":1,"lease":{"leaseId":"cbx_000000000001","slug":"s","name":"n","cloudId":"vm1","ssh":{"user":"u","host":"box.example","port":"22","proxyCommand":"true","readyCheck":"command -v tool-check-marker"}}}`
+			backend, _ := resolveStatusBackend(reply)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			lease, err := backend.Resolve(ctx, core.ResolveRequest{ID: "cbx_000000000001", NoLocalStateMutations: true, TransportOnly: tc.transportOnly})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lease.SSH.ReadyCheck != "command -v tool-check-marker" {
+				t.Fatalf("resolved ReadyCheck=%q, want the provider's", lease.SSH.ReadyCheck)
+			}
+			calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(calls), "\n") != 1 || !strings.Contains(string(calls), tc.want) || strings.Contains(string(calls), tc.reject) {
+				t.Fatalf("ssh calls=%q, want one call running %q", calls, tc.want)
+			}
+		})
 	}
 }

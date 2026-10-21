@@ -358,7 +358,11 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 			return core.LeaseTarget{}, core.Exit(2, "%v", err)
 		}
 	}
-	if err := core.WaitForSSHReady(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
+	wait := core.WaitForSSHReady
+	if req.TransportOnly {
+		wait = core.WaitForSSHTransport
+	}
+	if err := wait(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
 		return core.LeaseTarget{}, err
 	}
 	if req.Repo.Root != "" && !req.NoLocalStateMutations {

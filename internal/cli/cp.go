@@ -109,7 +109,7 @@ All flags:
 		}
 		return Exit(2, "provider=%s does not support cp; it has neither native copy nor an SSH lease transport", backend.Spec().Name)
 	}
-	lease, err := a.resolveSSHTransportLeaseTargetForRepo(ctx, &cfg, *id, true, false)
+	lease, err := a.resolveSSHTransportLeaseTargetForRepo(ctx, &cfg, *id, true, false, false)
 	if err != nil {
 		return err
 	}

@@ -1301,6 +1301,9 @@ type ResolveRequest struct {
 	StatusOnly  bool
 	ReadyProbe  bool
 	Prepare     bool
+	// TransportOnly asks only for a working SSH transport, as for a tunnel,
+	// so providers may skip the guest tool check.
+	TransportOnly bool
 	// IncludeDiagnostics opts explicit presentation callers into optional observations.
 	// It is not a provider protocol field or authority to modify lease state.
 	IncludeDiagnostics bool `json:"-"`

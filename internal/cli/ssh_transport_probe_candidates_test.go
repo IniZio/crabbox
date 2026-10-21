@@ -85,3 +85,34 @@ func TestProbeSSHTransportLeaseAfterClaimReportsUnreachableEndpoint(t *testing.T
 		t.Fatalf("unreachable endpoint was not reported: stderr=%q", got)
 	}
 }
+
+// An endpoint that Resolve already reached in this operation is not probed
+// again after the claim; a different host or port still is.
+func TestProbeSSHTransportLeaseAfterClaimSkipsPreparedEndpoint(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX fake SSH helper")
+	}
+	for _, tc := range []struct {
+		name     string
+		prepared string
+		want     string
+	}{
+		{"prepared", "2201", ""},
+		{"prepared elsewhere", "2202", "2201\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attempts := recordingSSHScript(t, nil)
+			target := SSHTarget{User: "alice", Host: "example.test", Port: tc.prepared}
+			target.recordPreparedEndpoint(tc.prepared)
+			target.Port = "2201"
+			lease := LeaseTarget{LeaseID: "cbx_probe_prepared", SSH: target}
+			if err := (App{Stderr: &bytes.Buffer{}}).probeSSHTransportLeaseAfterClaim(t.Context(), baseConfig(), &lease, false); err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(attempts)
+			if string(data) != tc.want {
+				t.Fatalf("probe attempts=%q, want %q", data, tc.want)
+			}
+		})
+	}
+}
