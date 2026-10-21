@@ -1123,12 +1123,12 @@ func quoteSSHTransportConfigValue(value string) string {
 
 // resolveSSHTransportLeaseTargetForRepo resolves the same managed SSH target
 // as run/sync without invoking the legacy argv-rendered transport probe.
-func (a App) resolveSSHTransportLeaseTargetForRepo(ctx context.Context, cfg *Config, id string, printFallback, reclaim bool) (LeaseTarget, error) {
+func (a App) resolveSSHTransportLeaseTargetForRepo(ctx context.Context, cfg *Config, id string, printFallback, reclaim, transportOnly bool) (LeaseTarget, error) {
 	repo, err := findRepo()
 	if err != nil {
 		return LeaseTarget{}, err
 	}
-	lease, err := a.resolveSSHLeaseWithRequestConfig(ctx, cfg, ResolveRequest{Repo: repo, ID: id, Reclaim: reclaim}, false)
+	lease, err := a.resolveSSHLeaseWithRequestConfig(ctx, cfg, ResolveRequest{Repo: repo, ID: id, Reclaim: reclaim, TransportOnly: transportOnly}, false)
 	if err != nil {
 		return LeaseTarget{}, err
 	}
@@ -1144,7 +1144,7 @@ func (a App) resolveSSHTransportLeaseTargetForRepo(ctx context.Context, cfg *Con
 }
 
 func (a App) probeSSHTransportLeaseAfterClaim(ctx context.Context, cfg Config, lease *LeaseTarget, reclaim bool) error {
-	if lease == nil || lease.SSH.Host == "" {
+	if lease == nil || lease.SSH.Host == "" || lease.SSH.endpointPrepared() {
 		return nil
 	}
 	configuredPort := lease.SSH.Port

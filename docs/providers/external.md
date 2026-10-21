@@ -586,6 +586,9 @@ When `readyCheck` is omitted, Crabbox uses a generic Linux tool check for
 `bash`, `python3`, `git`, `rsync`, and `tar`. Return an explicit `readyCheck`
 when the external provider needs a stronger guest bootstrap signal or targets a
 non-Linux host.
+`crabbox tunnel` needs only a working SSH transport, so its resolve waits for
+`exit 0` instead of the ready check, and it does not probe the same endpoint
+again after claiming the lease.
 
 `list` returns `{"protocolVersion":1,"leases":[...]}`. Protocol-command adapters
 that enable `idempotentLeaseId` must return a real array, including `[]` for an
