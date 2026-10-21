@@ -413,6 +413,9 @@ func (b *leaseBackend) ReleaseLease(ctx context.Context, req core.ReleaseLeaseRe
 	if err := core.ValidateLeaseTargetProviderIdentity(req.Lease, req.ExpectedProviderIdentity); err != nil {
 		return err
 	}
+	if err := core.CloseLeaseSSHControls(ctx, req.Lease.LeaseID); err != nil {
+		return err
+	}
 	expected := protocolExpectedIdentity(req.ExpectedProviderIdentity)
 	_, err := b.invoke(ctx, protocolRequest{
 		Operation: "release",
