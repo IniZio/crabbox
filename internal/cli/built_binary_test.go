@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +44,9 @@ func builtCLITestBinary() (string, error) {
 }
 
 func runCLITests(m *testing.M) (code int) {
+	if len(os.Args) == 3 && os.Args[1] == testTCPRelayArg {
+		return relayTestTCP(os.Args[2])
+	}
 	if os.Getenv("CRABBOX_TEST_SERVE_RELAY_PROXY") == "1" && len(os.Args) > 1 && os.Args[1] == "__serve-relay-proxy" {
 		if err := Run(context.Background(), os.Args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -62,4 +67,21 @@ func runCLITests(m *testing.M) (code int) {
 		}
 	}()
 	return testutil.RunWithIsolatedUserDirs(m)
+}
+
+const testTCPRelayArg = "__crabbox-test-tcp-relay"
+
+// relayTestTCP lets the test binary serve as an SSH ProxyCommand.
+func relayTestTCP(address string) int {
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	go func() {
+		_, _ = io.Copy(conn, os.Stdin)
+		_ = conn.(*net.TCPConn).CloseWrite()
+	}()
+	_, _ = io.Copy(os.Stdout, conn)
+	return 0
 }

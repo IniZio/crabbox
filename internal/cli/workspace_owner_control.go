@@ -18,10 +18,15 @@ import (
 func startWorkspaceOwnerControl(ctx context.Context, target SSHTarget) (SSHTarget, func() error, error) {
 	noop := func() error { return nil }
 	relay := usesServeRelay(target) && serveRelayControlsFromContext(ctx) != nil
+	pinned := pinnedProxyControlEligible(target)
 	if runtime.GOOS == "windows" || target.TargetOS == targetWindows ||
-		target.AuthSecret || target.AuthoritativeKnownHosts || target.SSHConfigFile != "" ||
-		(!relay && (target.NoControlMaster || target.ProxyCommand != "")) {
+		target.AuthSecret || (target.AuthoritativeKnownHosts && !pinned) || target.SSHConfigFile != "" ||
+		(!relay && !pinned && (target.NoControlMaster || target.ProxyCommand != "")) {
 		return target, noop, nil
+	}
+	if pinned {
+		// The workload's master never carries renewals or release.
+		target.ownerControlPath = ""
 	}
 	if relay {
 		var err error

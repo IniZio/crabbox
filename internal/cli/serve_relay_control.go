@@ -37,17 +37,37 @@ func serveRelayControlsFromContext(ctx context.Context) *serveRelayControls {
 }
 
 func serveRelayControlKey(target SSHTarget) [32]byte {
+	jumpHostKey := ""
+	if target.SSHJump != nil {
+		jumpHostKey = target.SSHJump.HostKey
+	}
 	return sha256.Sum256([]byte(strings.Join([]string{
-		target.Host, target.User, target.Port, target.Key, target.SSHHostKey,
+		target.Host, target.User, target.Port, target.Key, target.CertificateFile, target.SSHHostKey,
 		target.KnownHostsFile, target.HostKeyAlias, target.ProxyCommand,
-		target.SSHJump.HostKey, target.ChildEnv[serveRelayAuthEnv],
+		jumpHostKey, target.ChildEnv[serveRelayAuthEnv],
 	}, "\x00")))
+}
+
+// Only the master authenticates, so a provider proxy route may share one only
+// when the provider pins the host key in a per-lease known_hosts.
+func pinnedProxyControlEligible(target SSHTarget) bool {
+	return target.TargetOS != targetWindows && target.ProxyCommand != "" && target.SSHJump == nil &&
+		strings.TrimSpace(target.SSHHostKey) != "" && target.AuthoritativeKnownHosts &&
+		target.KnownHostsFile != "" && target.HostKeyAlias != "" && target.Key != "" &&
+		!target.DisableHostKeyChecking && !target.NoControlMaster && !target.AuthSecret &&
+		target.SSHConfigFile == "" && target.SSHConfigData == nil
 }
 
 func prepareServeRelayControl(ctx context.Context, target SSHTarget) (SSHTarget, error) {
 	controls := serveRelayControlsFromContext(ctx)
-	if controls == nil || !usesServeRelay(target) || runtime.GOOS == "windows" ||
+	if controls == nil || runtime.GOOS == "windows" ||
 		ctx.Value(serveRelayControlBypassKey{}) == true || target.ownerControlPath != "" {
+		return target, nil
+	}
+	if !usesServeRelay(target) {
+		if pinnedProxyControlEligible(target) {
+			target.ownerControlPath = controls.pinnedProxyMaster(ctx, target)
+		}
 		return target, nil
 	}
 	if target.DisableHostKeyChecking || target.Key == "" || target.KnownHostsFile == "" ||
@@ -107,9 +127,36 @@ func prepareServeRelayControl(ctx context.Context, target SSHTarget) (SSHTarget,
 	return target, nil
 }
 
+// pinnedProxyMaster returns the invocation's master socket for target, or ""
+// when none can start; that call then opens its own connection. A master that
+// dies later leaves a socket OpenSSH skips before connecting directly.
+func (c *serveRelayControls) pinnedProxyMaster(ctx context.Context, target SSHTarget) string {
+	key := serveRelayControlKey(target)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.retired[target.HostKeyAlias] {
+		return ""
+	}
+	if entry, ok := c.entries[key]; ok {
+		return entry.path
+	}
+	master, closeMaster, err := startSSHControlMaster(ctx, target, "10", "1")
+	if err != nil || master.ownerControlPath == "" {
+		_ = closeMaster()
+		return ""
+	}
+	if c.entries == nil {
+		c.entries = make(map[[32]byte]serveRelayControl)
+	}
+	c.entries[key] = serveRelayControl{leaseID: target.HostKeyAlias, path: master.ownerControlPath, close: closeMaster}
+	return master.ownerControlPath
+}
+
 func (c *serveRelayControls) closeLease(leaseID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Provider proxy masters are keyed by the lease's pinned host-key alias.
+	alias := ""
 	if leaseID == "" {
 		c.closed = true
 	} else {
@@ -117,10 +164,13 @@ func (c *serveRelayControls) closeLease(leaseID string) error {
 			c.retired = make(map[string]bool)
 		}
 		c.retired[leaseID] = true
+		if alias, _ = leaseHostKeyAlias(leaseID); alias != "" {
+			c.retired[alias] = true
+		}
 	}
 	var err error
 	for key, entry := range c.entries {
-		if leaseID == "" || entry.leaseID == leaseID {
+		if leaseID == "" || entry.leaseID == leaseID || alias != "" && entry.leaseID == alias {
 			err = errors.Join(err, entry.close())
 			delete(c.entries, key)
 		}
@@ -133,4 +183,10 @@ func closeServeRelayControls(ctx context.Context, leaseID string) error {
 		return controls.closeLease(leaseID)
 	}
 	return nil
+}
+
+// CloseLeaseSSHControls joins this invocation's masters for leaseID so none
+// outlives the lease's release.
+func CloseLeaseSSHControls(ctx context.Context, leaseID string) error {
+	return closeServeRelayControls(ctx, leaseID)
 }
