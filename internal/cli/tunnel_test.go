@@ -206,3 +206,67 @@ func TestTunnelReverseUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestReverseForwardWatcherReadsOpenSSHReplies(t *testing.T) {
+	for _, tc := range []struct {
+		sample, listen string
+		want           reverseForwardState
+	}{
+		{"success-port", "127.0.0.1:18080", reverseForwardReady},
+		{"success-socket", "127.0.0.1:18080", reverseForwardReady},
+		{"failure", "127.0.0.1:18080", reverseForwardFailed},
+		{"success-port", "127.0.0.1:18081", reverseForwardPending},
+	} {
+		t.Run(tc.sample+"/"+tc.listen, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "ssh-reverse-forward", tc.sample+".txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, chunk := range []int{len(data), 7, 1} {
+				var tail strings.Builder
+				watcher := newReverseForwardWatcher(tc.listen, &tail)
+				for rest := data; len(rest) > 0; {
+					n := min(chunk, len(rest))
+					if _, err := watcher.Write(rest[:n]); err != nil {
+						t.Fatal(err)
+					}
+					rest = rest[n:]
+				}
+				got := reverseForwardPending
+				select {
+				case got = <-watcher.outcome:
+				default:
+				}
+				if got != tc.want {
+					t.Fatalf("chunk %d: outcome=%d, want %d", chunk, got, tc.want)
+				}
+				if strings.Contains(tail.String(), "Reading configuration data") || strings.Contains(tail.String(), "\r") {
+					t.Fatalf("chunk %d: diagnostics kept debug output: %q", chunk, tail.String())
+				}
+				if tc.want == reverseForwardFailed && !strings.Contains(tail.String(), "remote forward failure for: listen 127.0.0.1:18080") {
+					t.Fatalf("chunk %d: diagnostics dropped the refused forward: %q", chunk, tail.String())
+				}
+			}
+		})
+	}
+}
+
+func TestReverseForwardWatcherReportsFirstReplyOnly(t *testing.T) {
+	watcher := newReverseForwardWatcher("127.0.0.1:18080", io.Discard)
+	write := func(line string) {
+		t.Helper()
+		if _, err := watcher.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("debug1: remote forward success for: listen 127.0.0.1:18080, connect 127.0.0.1:9000\r\n")
+	if got := <-watcher.outcome; got != reverseForwardReady {
+		t.Fatalf("outcome=%d, want ready", got)
+	}
+	write("debug1: remote forward failure for: listen 127.0.0.1:18080, connect 127.0.0.1:9000\r\n")
+	select {
+	case got := <-watcher.outcome:
+		t.Fatalf("second outcome %d reported", got)
+	default:
+	}
+}

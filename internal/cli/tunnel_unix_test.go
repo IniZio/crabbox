@@ -102,14 +102,28 @@ PY
 	}
 }
 
-// fakeReverseSSH records -R argv and a process pair, and answers the Box
-// probe only after probeFailures failed attempts.
-func writeFakeReverseSSH(t *testing.T, probeFailures int) (dir string) {
+// writeFakeReverseSSH installs an ssh that records -R argv and a process
+// pair. Given -v, it prints the reply sample to stderr the way OpenSSH does,
+// holding back the forward reply briefly. After a failure reply it exits 255
+// like ExitOnForwardFailure, but only 3 s later, so a test can tell the
+// reply from the exit. Any other connection is counted in "extra".
+func writeFakeReverseSSH(t *testing.T, reply string) (dir string) {
 	t.Helper()
 	dir = t.TempDir()
+	if reply != "" {
+		abs, err := filepath.Abs(reply)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply = abs
+	}
 	script := `#!/bin/sh
 for a in "$@"; do
   [ "$a" = "-G" ] && exit 0
+done
+verbose=false
+for a in "$@"; do
+  [ "$a" = "-v" ] && verbose=true
 done
 case " $* " in
 *" -R "*)
@@ -118,13 +132,21 @@ case " $* " in
   echo $! > "$CRABBOX_TEST_DIR/child"
   echo $$ > "$CRABBOX_TEST_DIR/pid"
   echo "secret-user denied" >&2
+  if $verbose && [ -n "$CRABBOX_TEST_REPLY" ]; then
+    sed '/remote forward/,$d' "$CRABBOX_TEST_REPLY" >&2
+    sleep 0.3
+    sed -n '/remote forward/,$p' "$CRABBOX_TEST_REPLY" >&2
+    if grep -q 'remote forward failure' "$CRABBOX_TEST_REPLY"; then
+      sleep 3
+      kill $!
+      exit 255
+    fi
+  fi
   wait
   ;;
 *)
-  n=$(cat "$CRABBOX_TEST_DIR/probes" 2>/dev/null || echo 0)
-  n=$((n+1))
-  echo $n > "$CRABBOX_TEST_DIR/probes"
-  [ "$n" -gt ` + strconv.Itoa(probeFailures) + ` ]
+  echo x >> "$CRABBOX_TEST_DIR/extra"
+  exit 1
   ;;
 esac
 `
@@ -133,12 +155,13 @@ esac
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CRABBOX_TEST_DIR", dir)
+	t.Setenv("CRABBOX_TEST_REPLY", reply)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	return dir
 }
 
-func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
+func TestSSHReverseForwardWaitsForForwardReplyAndReapsProcessGroup(t *testing.T) {
 	for _, tc := range []struct {
 		name, hostEnd, forward, json, plain string
 	}{
@@ -155,14 +178,14 @@ func TestSSHReverseForwardWaitsForBoxProbeAndReapsProcessGroup(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				testSSHReverseForwardLifecycle(t, boxPort, host, asJSON, tc.forward, ready)
+				testSSHReverseForwardLifecycle(t, boxPort, host, asJSON, tc.forward, ready, "testdata/ssh-reverse-forward/success-"+tc.name+".txt")
 			})
 		}
 	}
 }
 
-func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTunnelHost, asJSON bool, forward, ready string) {
-	dir := writeFakeReverseSSH(t, 1)
+func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTunnelHost, asJSON bool, forward, ready, reply string) {
+	dir := writeFakeReverseSSH(t, reply)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stdout := newSynchronizedBuffer(0)
@@ -172,7 +195,7 @@ func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTu
 	}()
 	time.Sleep(100 * time.Millisecond)
 	if got := stdout.String(); got != "" {
-		t.Fatalf("printed readiness before Box port accepted: %q", got)
+		t.Fatalf("printed readiness before the forward reply: %q", got)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for stdout.String() == "" && time.Now().Before(deadline) {
@@ -182,8 +205,11 @@ func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTu
 		t.Fatalf("ready output=%q, want %q", got, ready)
 	}
 	argv, err := os.ReadFile(filepath.Join(dir, "argv"))
-	if err != nil || !strings.Contains(string(argv), "-N -o ExitOnForwardFailure=yes "+forward) {
+	if err != nil || !strings.Contains(string(argv), "-v -N -o ExitOnForwardFailure=yes "+forward) {
 		t.Fatalf("argv=%q err=%v, want %q", argv, err, forward)
+	}
+	if extra, err := os.ReadFile(filepath.Join(dir, "extra")); err == nil {
+		t.Fatalf("readiness opened %d extra SSH connections", strings.Count(string(extra), "x"))
 	}
 	pids := map[string]int{}
 	for _, name := range []string{"pid", "child"} {
@@ -220,7 +246,7 @@ func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTu
 }
 
 func TestSSHReverseForwardTimeoutExit5Redacted(t *testing.T) {
-	writeFakeReverseSSH(t, 1<<30)
+	writeFakeReverseSSH(t, "")
 	stdout := newSynchronizedBuffer(0)
 	err := runSSHReverseForward(t.Context(), SSHTarget{User: "secret-user", AuthSecret: true, Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", reverseTunnelHost{port: "9000"}, true, &stdout, 800*time.Millisecond)
 	var exitErr ExitError
@@ -232,5 +258,28 @@ func TestSSHReverseForwardTimeoutExit5Redacted(t *testing.T) {
 	}
 	if stdout.String() != "" {
 		t.Fatalf("printed readiness on timeout: %q", stdout.String())
+	}
+}
+
+func TestSSHReverseForwardFailureReplyExit5(t *testing.T) {
+	writeFakeReverseSSH(t, "testdata/ssh-reverse-forward/failure.txt")
+	stdout := newSynchronizedBuffer(0)
+	start := time.Now()
+	err := runSSHReverseForward(t.Context(), SSHTarget{User: "alice", Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", reverseTunnelHost{port: "9000"}, true, &stdout, 10*time.Second)
+	var exitErr ExitError
+	if err == nil || !AsExitError(err, &exitErr) || exitErr.Code != 5 {
+		t.Fatalf("err=%v, want exit 5", err)
+	}
+	if !strings.Contains(err.Error(), "remote forward failure for: listen 127.0.0.1:18080") {
+		t.Fatalf("err=%v, want the refused forward named", err)
+	}
+	if strings.Contains(err.Error(), "debug1:") {
+		t.Fatalf("err carried ssh debug lines: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("refused forward took %s to fail", elapsed)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("printed readiness for a refused forward: %q", stdout.String())
 	}
 }
