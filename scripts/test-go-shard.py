@@ -36,6 +36,9 @@ SLOW_SECONDS = 15
 SLOW_TESTS = {
     "TestCoordinatorStopAggregateGuestCleanupPreservesReleaseBudget": 64,
     "TestWSLStageInitialHandoffBudgets": 38,
+    "TestRunDetachedGitSeedPreservesManifestAuthority": 25,
+    "TestRemoteFailureCaptureEnforcesWriterCaps": 26,
+    "TestSSHCommandEnvCleanupVerification": 25,
     "TestWaitForSSHReadyRealSSHTimeoutDiagnostic": 32,
     "TestHeartbeatCoordinatorWaitsForAccessRefresh": 31,
     "TestRunGitOverlaySuccessFallbackAndLateLocalEdit": 31,
