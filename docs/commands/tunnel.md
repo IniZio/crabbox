@@ -58,9 +58,13 @@ crabbox tunnel --id blue-box --reverse 18080:/tmp/app-1000/front.sock --json
 
 The reverse forward uses its own non-multiplexed SSH session, started with
 `-v`. Readiness is OpenSSH's own `remote forward success` reply for the Box
-port, so no extra connection is opened; until then nothing is printed. After
-that it prints one line and blocks until Ctrl-C,
-SIGTERM, or context cancellation, which reaps the SSH process group. With
+port, so no extra connection is opened; until then nothing is printed. A lease
+whose provider pins its host key behind a proxy command instead adds the
+forward to the connection that checked the lease's readiness (`ssh -O
+forward`), so the tunnel opens one SSH connection in all; the master replies
+only once the server accepts the forward, and the tunnel exits with status 5
+if that connection closes. After that it prints one line and blocks until
+Ctrl-C, SIGTERM, or context cancellation, which reaps the SSH process group. With
 `--json` the line is `{"box":18080,"host":9000}`, or
 `{"box":18080,"socket":"/tmp/app-1000/front.sock"}` for a socket; otherwise
 `box 127.0.0.1:18080 -> host 127.0.0.1:9000` or

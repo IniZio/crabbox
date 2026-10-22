@@ -119,7 +119,7 @@ func startSSHControlMaster(ctx context.Context, target SSHTarget, connectTimeout
 		// OpenSSH publishes its control socket only after authenticating. Clients
 		// never create replacement masters if this foreground process later exits.
 		if info, err := os.Lstat(controlPath); err == nil && info.Mode()&os.ModeSocket != 0 {
-			target.ownerControlPath = controlPath
+			target.ownerControlPath, target.ownerControlDone = controlPath, done
 			return target, closeMaster, nil
 		}
 		if err := sleepContext(readyCtx, 10*time.Millisecond); err != nil {

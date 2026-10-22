@@ -60,7 +60,8 @@ type SSHTarget struct {
 	ReadyCheck              string
 	AuthSecret              bool
 	NoControlMaster         bool
-	ownerControlPath        string // Private foreground master with an explicit local lifetime owner.
+	ownerControlPath        string          // Private foreground master with an explicit local lifetime owner.
+	ownerControlDone        <-chan struct{} // Closed when the ownerControlPath master exits.
 	DisableHostKeyChecking  bool
 	NetworkKind             NetworkMode
 	SSHConfigProxy          bool

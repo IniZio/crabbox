@@ -74,6 +74,57 @@ type forwardSSHServer struct {
 	hostKey        string
 	forwarded      int
 	sessionHandler func(ssh.NewChannel, string)
+	// remoteForwards is nil unless a test accepts tcpip-forward requests.
+	remoteForwards map[uint32]*ssh.ServerConn
+}
+
+func (s *forwardSSHServer) acceptRemoteForwards() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remoteForwards = map[uint32]*ssh.ServerConn{}
+}
+
+func (s *forwardSSHServer) serveGlobalRequests(transport *ssh.ServerConn, requests <-chan *ssh.Request) {
+	for req := range requests {
+		var forward struct {
+			Addr string
+			Port uint32
+		}
+		s.mu.Lock()
+		accept := s.remoteForwards != nil && req.Type == "tcpip-forward" && ssh.Unmarshal(req.Payload, &forward) == nil && s.remoteForwards[forward.Port] == nil
+		if accept {
+			s.remoteForwards[forward.Port] = transport
+		}
+		s.mu.Unlock()
+		if req.WantReply {
+			_ = req.Reply(accept, nil)
+		}
+	}
+}
+
+// dialRemoteForward connects to the box end of a reverse forward and returns
+// what the host end sends before closing.
+func (s *forwardSSHServer) dialRemoteForward(port uint32) (string, error) {
+	s.mu.Lock()
+	transport := s.remoteForwards[port]
+	s.mu.Unlock()
+	if transport == nil {
+		return "", fmt.Errorf("no remote forward on box port %d", port)
+	}
+	payload := ssh.Marshal(struct {
+		Addr       string
+		Port       uint32
+		OriginAddr string
+		OriginPort uint32
+	}{"127.0.0.1", port, "127.0.0.1", 1})
+	ch, reqs, err := transport.OpenChannel("forwarded-tcpip", payload)
+	if err != nil {
+		return "", err
+	}
+	go ssh.DiscardRequests(reqs)
+	defer ch.Close()
+	data, err := io.ReadAll(ch)
+	return string(data), err
 }
 
 func newForwardSSHServer(t *testing.T, user string, allowedPorts ...int) *forwardSSHServer {
@@ -142,7 +193,7 @@ func newForwardSSHServerWithSignerAt(t *testing.T, user, address string, signer 
 					return
 				}
 				defer transport.Close()
-				go ssh.DiscardRequests(requests)
+				go s.serveGlobalRequests(transport, requests)
 				for incoming := range channels {
 					s.mu.Lock()
 					handleSession := s.sessionHandler
