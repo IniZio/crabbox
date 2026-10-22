@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -41,19 +42,26 @@ func serveRelayControlKey(target SSHTarget) [32]byte {
 	if target.SSHJump != nil {
 		jumpHostKey = target.SSHJump.HostKey
 	}
+	pin := target.SSHHostKey
+	if strings.TrimSpace(pin) == "" && target.KnownHostsFile != "" {
+		// Without a host key from the provider the lease's known_hosts is the
+		// pin, so a re-pinned file must not reuse a master opened under the old one.
+		data, _ := os.ReadFile(target.KnownHostsFile)
+		pin = string(data)
+	}
 	return sha256.Sum256([]byte(strings.Join([]string{
-		target.Host, target.User, target.Port, target.Key, target.CertificateFile, target.SSHHostKey,
+		target.Host, target.User, target.Port, target.Key, target.CertificateFile, pin,
 		target.KnownHostsFile, target.HostKeyAlias, target.ProxyCommand,
 		jumpHostKey, target.ChildEnv[serveRelayAuthEnv],
 	}, "\x00")))
 }
 
 // Only the master authenticates, so a provider proxy route may share one only
-// when the provider pins the host key in a per-lease known_hosts.
+// when the provider pins the host key in a per-lease known_hosts. The provider
+// may resend no host key and no client key; the existing pin still applies.
 func pinnedProxyControlEligible(target SSHTarget) bool {
 	return target.TargetOS != targetWindows && target.ProxyCommand != "" && target.SSHJump == nil &&
-		strings.TrimSpace(target.SSHHostKey) != "" && target.AuthoritativeKnownHosts &&
-		target.KnownHostsFile != "" && target.HostKeyAlias != "" && target.Key != "" &&
+		target.AuthoritativeKnownHosts && target.KnownHostsFile != "" && target.HostKeyAlias != "" &&
 		!target.DisableHostKeyChecking && !target.NoControlMaster && !target.AuthSecret &&
 		target.SSHConfigFile == "" && target.SSHConfigData == nil
 }

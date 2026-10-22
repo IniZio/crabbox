@@ -167,14 +167,17 @@ func TestPinnedProxyControlEligibility(t *testing.T) {
 	if !pinnedProxyControlEligible(base) {
 		t.Fatal("pinned proxy lease must be eligible")
 	}
+	resolved := base
+	resolved.Key, resolved.SSHHostKey = "", ""
+	if !pinnedProxyControlEligible(resolved) {
+		t.Fatal("a lease pinned only by its known_hosts must be eligible")
+	}
 	for name, mutate := range map[string]func(*SSHTarget){
 		"windows target":     func(v *SSHTarget) { v.TargetOS = targetWindows },
 		"no proxy":           func(v *SSHTarget) { v.ProxyCommand = "" },
-		"no pin":             func(v *SSHTarget) { v.SSHHostKey = "" },
 		"provider trust off": func(v *SSHTarget) { v.AuthoritativeKnownHosts = false },
 		"no known_hosts":     func(v *SSHTarget) { v.KnownHostsFile = "" },
 		"no alias":           func(v *SSHTarget) { v.HostKeyAlias = "" },
-		"no key":             func(v *SSHTarget) { v.Key = "" },
 		"checking disabled":  func(v *SSHTarget) { v.DisableHostKeyChecking = true },
 		"provider opt-out":   func(v *SSHTarget) { v.NoControlMaster = true },
 		"auth secret":        func(v *SSHTarget) { v.AuthSecret = true },
