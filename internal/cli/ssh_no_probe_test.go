@@ -53,3 +53,20 @@ func TestSSHNoProbePrintsCommandWithoutConnecting(t *testing.T) {
 		t.Fatalf("--no-probe touched the lease %d times, want once", touches-1)
 	}
 }
+
+func TestSSHNoProbeSkipsTheProviderReadinessWait(t *testing.T) {
+	lease, _ := setupRunClaimSnapshotTest(t)
+	var waits []bool
+	runEnvProfileTestResolveHook = func(req ResolveRequest) { waits = append(waits, !req.NoSSHWait) }
+	t.Cleanup(func() { runEnvProfileTestResolveHook = nil })
+	for _, extra := range [][]string{nil, {"--no-probe"}} {
+		var stdout, stderr bytes.Buffer
+		args := append([]string{"--provider", runEnvProfileTestProvider{}.Spec().Name, "--id", lease.LeaseID}, extra...)
+		if err := (App{Stdout: &stdout, Stderr: &stderr}).ssh(t.Context(), args); err != nil {
+			t.Fatalf("ssh %v: %v\nstderr=%s", extra, err, stderr.String())
+		}
+	}
+	if len(waits) != 2 || !waits[0] || waits[1] {
+		t.Fatalf("provider SSH readiness waits per call = %v, want [true false]", waits)
+	}
+}

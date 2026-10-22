@@ -642,7 +642,7 @@ func (a App) resolveNetworkLoginLeaseTargetForRepo(ctx context.Context, cfg *Con
 	if err != nil {
 		return LeaseTarget{}, err
 	}
-	req := ResolveRequest{Repo: repo, ID: id, Reclaim: reclaim, RejectAuthSecret: !probeTransport}
+	req := ResolveRequest{Repo: repo, ID: id, Reclaim: reclaim, RejectAuthSecret: !probeTransport, NoSSHWait: skipProbe}
 	lease, err := a.resolveSSHLeaseWithRequestConfig(ctx, cfg, req, true)
 	if err != nil {
 		return LeaseTarget{}, err

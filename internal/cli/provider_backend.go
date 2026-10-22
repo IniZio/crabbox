@@ -1304,6 +1304,9 @@ type ResolveRequest struct {
 	// TransportOnly asks only for a working SSH transport, as for a tunnel,
 	// so providers may skip the guest tool check.
 	TransportOnly bool
+	// NoSSHWait skips the provider's SSH readiness wait, for a caller that only
+	// prints the target and connects itself.
+	NoSSHWait bool
 	// IncludeDiagnostics opts explicit presentation callers into optional observations.
 	// It is not a provider protocol field or authority to modify lease state.
 	IncludeDiagnostics bool `json:"-"`

@@ -362,8 +362,10 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 	if req.TransportOnly {
 		wait = core.WaitForSSHTransport
 	}
-	if err := wait(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
-		return core.LeaseTarget{}, err
+	if !req.NoSSHWait {
+		if err := wait(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
+			return core.LeaseTarget{}, err
+		}
 	}
 	if req.Repo.Root != "" && !req.NoLocalStateMutations {
 		slug := core.NormalizeLeaseSlug(lease.Server.Labels["slug"])
