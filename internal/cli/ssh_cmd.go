@@ -8,7 +8,13 @@ import (
 )
 
 func (a App) ssh(ctx context.Context, args []string) error {
-	resolved, err := a.resolveSSHCommandTarget(ctx, "ssh", args, true)
+	noProbe := false
+	resolved, err := a.resolveSSHCommandTargetWithOptions(ctx, "ssh", args, true, sshCommandResolveOptions{
+		registerFlags: func(fs *flag.FlagSet) {
+			fs.BoolVar(&noProbe, "no-probe", false, "print the command without opening an SSH connection first")
+		},
+		noProbe: &noProbe,
+	})
 	if err != nil {
 		return err
 	}
@@ -33,6 +39,8 @@ func (a App) resolveSSHCommandTarget(ctx context.Context, command string, args [
 type sshCommandResolveOptions struct {
 	registerFlags func(*flag.FlagSet)
 	validateFlags func() error
+	// noProbe is read after flag parsing, so it points at the flag's value.
+	noProbe *bool
 }
 
 func (a App) resolveSSHCommandTargetWithOptions(ctx context.Context, command string, args []string, allowShowSecret bool, opts sshCommandResolveOptions) (resolvedSSHCommandTarget, error) {
@@ -74,7 +82,8 @@ func (a App) resolveSSHCommandTargetWithOptions(ctx context.Context, command str
 	if err := requireLeaseID(*id, "crabbox "+command+" --id <lease-id-or-slug>", cfg); err != nil {
 		return resolvedSSHCommandTarget{}, err
 	}
-	lease, err := a.resolveNetworkLoginLeaseTargetForRepo(ctx, &cfg, *id, false, *reclaim, command != "connect")
+	skipProbe := opts.noProbe != nil && *opts.noProbe
+	lease, err := a.resolveNetworkLoginLeaseTargetForRepo(ctx, &cfg, *id, false, *reclaim, command != "connect", skipProbe)
 	if err != nil {
 		return resolvedSSHCommandTarget{}, err
 	}

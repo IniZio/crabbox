@@ -93,7 +93,14 @@ providers resolve access lazily or wrap the connection:
 --network auto|tailscale|public
 --reclaim                   Claim this lease for the current repo before touching it.
 --show-secret               Print secret auth material for token-based SSH providers.
+--no-probe                  Print the command without opening an SSH connection first.
 ```
+
+By default `crabbox ssh` opens one short SSH connection to check the transport
+and pick the reachable port before it prints. `--no-probe` skips that check: the
+lease is still resolved, claimed and refreshed, and the command uses the
+provider's primary port. Use it when a caller opens the connection itself right
+after and a slow handshake makes the extra connection costly.
 
 `--provider` accepts any provider that supports SSH access; run
 [`crabbox providers`](providers.md) to see the available set and their
