@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -161,12 +162,20 @@ func (w *reverseForwardWatcher) line(line string) {
 	}
 }
 
-// runSSHReverseForward owns one non-multiplexed ssh that exposes the host end
-// on the Box's loopback boxPort, until cancelled.
+// runSSHReverseForward exposes the host end on the Box's loopback boxPort until
+// cancelled. A pinned proxy lease adds the forward to the invocation's master,
+// so the tunnel shares the connection that checked readiness; other leases
+// own one non-multiplexed ssh.
 func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string, host reverseTunnelHost, asJSON bool, stdout anyWriter, readyTimeout time.Duration) (err error) {
 	terminationCtx, stopTerminationSignals := pondMeshTerminationContext(ctx)
 	defer stopTerminationSignals()
 	ctx = terminationCtx
+
+	if pinnedProxyControlEligible(target) {
+		if master, err := prepareServeRelayControl(ctx, target); err == nil && master.ownerControlPath != "" {
+			return runSSHReverseForwardOverMaster(ctx, master, boxPort, host, asJSON, stdout, readyTimeout)
+		}
+	}
 
 	session, err := newSSHTransportSession(ctx, target, true)
 	if err != nil {
@@ -218,18 +227,9 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string,
 			return Exit(5, "SSH reverse tunnel was refused on box %s:%s: %s", sshTunnelLoopbackHost, boxPort, tailForError(strings.TrimSpace(diagnostic())))
 		}
 	}
-	if asJSON {
-		ready := sshReverseForwardReady{Socket: host.socket}
-		ready.Box, _ = strconv.Atoi(boxPort)
-		if host.socket == "" {
-			ready.Host, _ = strconv.Atoi(host.port)
-		}
-		if encErr := json.NewEncoder(stdout).Encode(ready); encErr != nil {
-			stopAndWait()
-			return encErr
-		}
-	} else {
-		fmt.Fprintf(stdout, "box %s:%s -> host %s\n", sshTunnelLoopbackHost, boxPort, host)
+	if err := writeReverseForwardReady(stdout, boxPort, host, asJSON); err != nil {
+		stopAndWait()
+		return err
 	}
 	select {
 	case result := <-waited:
@@ -237,4 +237,39 @@ func runSSHReverseForward(ctx context.Context, target SSHTarget, boxPort string,
 	case <-terminationCtx.Done():
 		return cancelledSSHForwardResult(stopAndWait())
 	}
+}
+
+// runSSHReverseForwardOverMaster asks the master for the forward. The master
+// answers only after the server accepts or refuses it, so a zero exit is the
+// readiness signal. The forward lives until the invocation closes the master.
+func runSSHReverseForwardOverMaster(ctx context.Context, master SSHTarget, boxPort string, host reverseTunnelHost, asJSON bool, stdout anyWriter, readyTimeout time.Duration) error {
+	forward := net.JoinHostPort(sshTunnelLoopbackHost, boxPort) + ":" + host.String()
+	requestCtx, cancel := context.WithTimeout(ctx, readyTimeout)
+	defer cancel()
+	output, err := exec.CommandContext(requestCtx, directSSHExecutable(), "-F", "none", "-S", master.ownerControlPath, "-O", "forward", "-R", forward, sshTransportHostAlias).CombinedOutput()
+	if err != nil {
+		return Exit(5, "SSH reverse tunnel was refused on box %s:%s: %s", sshTunnelLoopbackHost, boxPort, tailForError(strings.TrimSpace(redactSSHTransportDiagnostic(master, string(output)))))
+	}
+	if err := writeReverseForwardReady(stdout, boxPort, host, asJSON); err != nil {
+		return err
+	}
+	select {
+	case <-master.ownerControlDone:
+		return Exit(5, "SSH reverse tunnel on box %s:%s lost its connection", sshTunnelLoopbackHost, boxPort)
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+func writeReverseForwardReady(stdout anyWriter, boxPort string, host reverseTunnelHost, asJSON bool) error {
+	if !asJSON {
+		_, err := fmt.Fprintf(stdout, "box %s:%s -> host %s\n", sshTunnelLoopbackHost, boxPort, host)
+		return err
+	}
+	ready := sshReverseForwardReady{Socket: host.socket}
+	ready.Box, _ = strconv.Atoi(boxPort)
+	if host.socket == "" {
+		ready.Host, _ = strconv.Atoi(host.port)
+	}
+	return json.NewEncoder(stdout).Encode(ready)
 }

@@ -19,6 +19,7 @@ type serveRelayControl struct {
 	leaseID string
 	proxy   string
 	path    string
+	done    <-chan struct{}
 	close   func() error
 }
 
@@ -74,7 +75,8 @@ func prepareServeRelayControl(ctx context.Context, target SSHTarget) (SSHTarget,
 	}
 	if !usesServeRelay(target) {
 		if pinnedProxyControlEligible(target) {
-			target.ownerControlPath = controls.pinnedProxyMaster(ctx, target)
+			master := controls.pinnedProxyMaster(ctx, target)
+			target.ownerControlPath, target.ownerControlDone = master.path, master.done
 		}
 		return target, nil
 	}
@@ -135,29 +137,30 @@ func prepareServeRelayControl(ctx context.Context, target SSHTarget) (SSHTarget,
 	return target, nil
 }
 
-// pinnedProxyMaster returns the invocation's master socket for target, or ""
-// when none can start; that call then opens its own connection. A master that
-// dies later leaves a socket OpenSSH skips before connecting directly.
-func (c *serveRelayControls) pinnedProxyMaster(ctx context.Context, target SSHTarget) string {
+// pinnedProxyMaster returns the invocation's master for target, with an empty
+// path when none can start; that call then opens its own connection. A master
+// that dies later leaves a socket OpenSSH skips before connecting directly.
+func (c *serveRelayControls) pinnedProxyMaster(ctx context.Context, target SSHTarget) serveRelayControl {
 	key := serveRelayControlKey(target)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.retired[target.HostKeyAlias] {
-		return ""
+		return serveRelayControl{}
 	}
 	if entry, ok := c.entries[key]; ok {
-		return entry.path
+		return entry
 	}
 	master, closeMaster, err := startSSHControlMaster(ctx, target, "10", "1")
 	if err != nil || master.ownerControlPath == "" {
 		_ = closeMaster()
-		return ""
+		return serveRelayControl{}
 	}
 	if c.entries == nil {
 		c.entries = make(map[[32]byte]serveRelayControl)
 	}
-	c.entries[key] = serveRelayControl{leaseID: target.HostKeyAlias, path: master.ownerControlPath, close: closeMaster}
-	return master.ownerControlPath
+	entry := serveRelayControl{leaseID: target.HostKeyAlias, path: master.ownerControlPath, done: master.ownerControlDone, close: closeMaster}
+	c.entries[key] = entry
+	return entry
 }
 
 func (c *serveRelayControls) closeLease(leaseID string) error {
