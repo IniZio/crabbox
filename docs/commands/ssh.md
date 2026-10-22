@@ -97,7 +97,8 @@ providers resolve access lazily or wrap the connection:
 ```
 
 By default `crabbox ssh` opens one short SSH connection to check the transport
-and pick the reachable port before it prints. `--no-probe` skips that check: the
+and pick the reachable port before it prints. `--no-probe` skips that check and
+the external provider's SSH readiness wait, so it opens no SSH connection: the
 lease is still resolved, claimed and refreshed, and the command uses the
 provider's primary port. Use it when a caller opens the connection itself right
 after and a slow handshake makes the extra connection costly.

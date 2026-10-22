@@ -801,6 +801,7 @@ var runEnvProfileTestAcquireHook func(AcquireRequest)
 var runEnvProfileTestConfigureHook func(Config)
 var runEnvProfileTestAcquireLease func(AcquireRequest) (LeaseTarget, error)
 var runEnvProfileTestTouchHook func(TouchRequest) error
+var runEnvProfileTestResolveHook func(ResolveRequest)
 var runEnvProfileTestEvidenceHook func(context.Context, RunFailureEvidenceRequest) (RunFailureEvidenceCollector, error)
 
 func (b runEnvProfileTestBackend) BeginRunFailureEvidence(ctx context.Context, req RunFailureEvidenceRequest) (RunFailureEvidenceCollector, error) {
@@ -830,7 +831,10 @@ func (b runEnvProfileTestBackend) Acquire(_ context.Context, req AcquireRequest)
 		LeaseID: "cbx_env_profile_test",
 	}, nil
 }
-func (b runEnvProfileTestBackend) Resolve(context.Context, ResolveRequest) (LeaseTarget, error) {
+func (b runEnvProfileTestBackend) Resolve(_ context.Context, req ResolveRequest) (LeaseTarget, error) {
+	if runEnvProfileTestResolveHook != nil {
+		runEnvProfileTestResolveHook(req)
+	}
 	return b.Acquire(context.Background(), AcquireRequest{})
 }
 func (b runEnvProfileTestBackend) List(context.Context, ListRequest) ([]LeaseView, error) {
