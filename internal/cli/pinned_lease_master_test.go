@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -119,5 +120,20 @@ func TestStopDeleteOnKnownHostsPinnedLeaseUsesOneConnection(t *testing.T) {
 	}
 	if got := server.handshakes(); got != 1 {
 		t.Fatalf("stop --delete authenticated %d times, want one\nstderr=%s", got, stderr.String())
+	}
+}
+
+func TestServeRelayControlKeyTracksKnownHostsContentWithoutProviderPin(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(file, []byte("alias ssh-ed25519 AAAA\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := SSHTarget{Host: "box", User: "u", Port: "22", KnownHostsFile: file, HostKeyAlias: "alias", ProxyCommand: "proxy"}
+	before := serveRelayControlKey(target)
+	if err := os.WriteFile(file, []byte("alias ssh-ed25519 BBBB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if serveRelayControlKey(target) == before {
+		t.Fatal("a re-pinned known_hosts kept the old master key")
 	}
 }
