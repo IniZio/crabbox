@@ -637,7 +637,7 @@ func (a App) resolveNetworkLeaseTargetForRepo(ctx context.Context, cfg Config, i
 	return a.resolveNetworkLeaseTargetForRepoWithConfig(ctx, &cfg, id, printFallback, reclaim)
 }
 
-func (a App) resolveNetworkLoginLeaseTargetForRepo(ctx context.Context, cfg *Config, id string, printFallback, reclaim, probeTransport bool) (LeaseTarget, error) {
+func (a App) resolveNetworkLoginLeaseTargetForRepo(ctx context.Context, cfg *Config, id string, printFallback, reclaim, probeTransport, skipProbe bool) (LeaseTarget, error) {
 	repo, err := findRepo()
 	if err != nil {
 		return LeaseTarget{}, err
@@ -655,7 +655,7 @@ func (a App) resolveNetworkLoginLeaseTargetForRepo(ctx context.Context, cfg *Con
 		return LeaseTarget{}, err
 	}
 	lease.SSH = resolved.Target
-	if lease.SSH.Host != "" {
+	if lease.SSH.Host != "" && !skipProbe {
 		if probeTransport {
 			_ = probeSSHTransport(ctx, &lease.SSH, 4*time.Second)
 		} else {
