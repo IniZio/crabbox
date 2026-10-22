@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/openclaw/crabbox/internal/testutil"
 )
@@ -54,6 +55,8 @@ func runCLITests(m *testing.M) (code int) {
 		}
 		return 0
 	}
+	actionsHydrationStopSettleDelay = time.Millisecond
+	localActionsHydrationPollInterval = 50 * time.Millisecond
 	defer func() {
 		if cliTestBuild.dir != "" {
 			// Capture roots rebuild the adjacent .provider fixture after their
