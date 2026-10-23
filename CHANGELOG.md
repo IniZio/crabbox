@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Coordinator client: recover idempotent reads from native HTTP idle-connection closes and socket/pipe drops within the existing retry budget, without retrying mutations. [PR 2939](https://github.com/openclaw/crabbox/pull/2939). Thanks @joshavant.
 - CI: give the real-PowerShell WSL bootstrap parsing test its own 60 s budget and a bounded pwsh probe, since cold pwsh starts on runners exceeded the 5 s default. [PR 2938](https://github.com/openclaw/crabbox/pull/2938).
 - CI: retry coordinator health verification for up to three minutes during edge propagation, preserving deployment consistency checks and reporting the last version ID and tag on failure. [PR 2937](https://github.com/openclaw/crabbox/pull/2937).
 - Windows: quote PowerShell values containing typographic single quotes (‘ ’ ‚ ‛), which PowerShell treats as string delimiters, across commands, forwarded environment values, bootstrap generators, Hyper-V and Windows Sandbox, so such values no longer break runs or execute as code. [PR 2924](https://github.com/openclaw/crabbox/pull/2924). Thanks @parth-garg01.
