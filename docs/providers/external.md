@@ -149,6 +149,15 @@ it. Without it, both commands fail with exit 2 and
 `external.lifecycle`, which has no pause or resume operation. It does not change
 the local claim scope.
 
+`external.capabilities.cacheVolumes` lets Crabbox hand configured
+[cache volumes](../features/cache-volumes.md) to the adapter on `acquire`. Like
+`pauseResume`, set it only in trusted user config; repository config,
+environment variables, and flags cannot enable it. With it, `crabbox providers
+--json --configured` lists `cache-volume` for `external`; without it, configured
+volumes are not sent and a `required` volume fails early with
+`provider=external does not support required cache volume`. It has no effect with
+a declarative `external.lifecycle`, and it does not change the local claim scope.
+
 Local claims are scoped to a fingerprint of the selected protocol command or
 declarative lifecycle, connection templates, `external.config`, normalized
 target, and normalized Windows mode. For backward compatibility, the normalized
@@ -539,6 +548,47 @@ host-key pin. An
 nonzero exit and includes the tail of the adapter's stderr. When the capability
 is enabled, `crabbox providers --json` lists `pause-resume` for `external`;
 otherwise it does not.
+
+Cache volumes ride on `acquire` only, and only with
+`external.capabilities.cacheVolumes`. Each entry names a `group`, the adapter
+store the volume lives in, plus a `name`, an opaque `key`, one or more `paths`,
+and an optional `sizeGB` and `required`. A path is `~/<rel>` (the lease's login
+home) or an absolute path. Every field is omitted when empty, and
+`protocolVersion` stays 1:
+
+```json
+{
+  "protocolVersion": 1,
+  "operation": "acquire",
+  "desired": {
+    "leaseId": "cbx_0123456789ab",
+    "slug": "fast-coral",
+    "name": "devbox-fast-coral",
+    "cacheVolumes": [
+      {"group": "7f3a9c1e04b2d655", "name": "gradle", "key": "7f3a9c1e04b2d655-gradle",
+       "paths": ["~/.gradle/caches", "~/.gradle/wrapper"]},
+      {"group": "7f3a9c1e04b2d655", "name": "android-sdk", "key": "7f3a9c1e04b2d655-android-sdk",
+       "paths": ["/opt/android-sdk"], "sizeGB": 12}
+    ]
+  }
+}
+```
+
+`group` and `key` must match `[A-Za-z0-9._-]{1,96}`. The lease in the response
+reports what the adapter did with each volume:
+
+```json
+{"protocolVersion": 1, "lease": {"...": "...", "cacheVolumes": [
+  {"name": "gradle", "outcome": "restored", "detail": "gen 1729781203"},
+  {"name": "android-sdk", "outcome": "empty", "detail": "no generation yet"}
+]}}
+```
+
+`outcome` is `restored`, `empty`, or `skipped`. Crabbox prints each entry on
+stderr as `cache volume NAME: OUTCOME (detail)`. When a volume marked `required`
+comes back `skipped`, Crabbox rolls the acquisition back through `release` and
+fails. A skipped volume that is not required leaves a plain directory and the
+lease proceeds.
 
 Successful lease response:
 

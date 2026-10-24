@@ -68,6 +68,9 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	if core.ClassWasExplicit(b.cfg) {
 		desired.Class = strings.TrimSpace(req.Options.Class)
 	}
+	if b.cacheVolumesEnabled() {
+		desired.CacheVolumes = cacheVolumesForProtocol(b.cfg.Cache.Volumes)
+	}
 	response, err := b.invoke(ctx, protocolRequest{
 		Operation: "acquire",
 		Desired:   desired,
@@ -81,6 +84,7 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	if response.Lease == nil {
 		return core.LeaseTarget{}, core.Exit(5, "external provider acquire returned no lease")
 	}
+	printCacheVolumeEchoes(b.rt.Stderr, response.Lease.CacheVolumes)
 	if !fixedLeaseID {
 		if response.Lease.LeaseID != "" && response.Lease.LeaseID != desired.LeaseID {
 			err = core.Exit(4, "external provider lease identity changed: expected %s, found %s", desired.LeaseID, response.Lease.LeaseID)
@@ -94,6 +98,9 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		if err == nil {
 			err = validateAndFillDesired(response.Lease, desired)
 		}
+	}
+	if err == nil {
+		err = enforceRequiredCacheVolumes(desired.CacheVolumes, response.Lease.CacheVolumes)
 	}
 	if err != nil {
 		if !retainReservationOnFailure {
@@ -775,8 +782,9 @@ func externalControllerScope(cfg core.Config) (string, error) {
 	}
 	if cfg.External.Capabilities.IdempotentLeaseID {
 		capabilities := cfg.External.Capabilities
-		// pauseResume only gates an optional op; toggling it must not orphan existing claims.
+		// pauseResume and cacheVolumes only gate optional behavior; toggling them must not orphan existing claims.
 		capabilities.PauseResume = false
+		capabilities.CacheVolumes = false
 		scope.Capabilities = &capabilities
 	}
 	if lifecycleConfigured(cfg.External) {

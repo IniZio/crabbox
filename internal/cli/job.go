@@ -274,8 +274,7 @@ func jobLeaseCreateArgsFor(cfg Config, job JobConfig, includeCacheVolumes bool) 
 	if job.Code != nil {
 		args = append(args, "--code="+fmt.Sprint(*job.Code))
 	}
-	providerName := firstNonBlank(job.Provider, cfg.Provider)
-	if includeCacheVolumes && providerSupportsCacheVolumes(providerName) {
+	if includeCacheVolumes && providerSupportsCacheVolumes(cfg, firstNonBlank(job.Provider, cfg.Provider)) {
 		for _, volume := range CacheVolumeStickyDiskSpecs(cfg.Cache.Volumes) {
 			args = append(args, "--cache-volume", volume)
 		}
@@ -377,7 +376,7 @@ func jobRunArgs(cfg Config, job JobConfig, leaseID string, noHydrate bool) []str
 	return args
 }
 
-func providerSupportsCacheVolumes(providerName string) bool {
+func providerSupportsCacheVolumes(cfg Config, providerName string) bool {
 	provider, err := ProviderFor(providerName)
-	return err == nil && provider.Spec().Features.Has(FeatureCacheVolume)
+	return err == nil && ProviderFeaturesForConfig(provider, cfg).Has(FeatureCacheVolume)
 }

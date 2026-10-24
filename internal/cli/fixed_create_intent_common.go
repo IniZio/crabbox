@@ -57,10 +57,12 @@ func fixedCreateIntentCacheVolumes(volumes []CacheVolumeConfig) ([]fixedCreateIn
 		if volume.Name == "" {
 			volume.Name = volume.Key
 		}
-		if err := validateCacheVolume(volume); err != nil {
+		if err := validateAbsoluteCacheVolume(volume); err != nil {
 			return nil, err
 		}
-		canonical = append(canonical, fixedCreateIntentCacheVolume(volume))
+		canonical = append(canonical, fixedCreateIntentCacheVolume{
+			Name: volume.Name, Key: volume.Key, Path: volume.Path, SizeGB: volume.SizeGB, Required: volume.Required,
+		})
 	}
 	sort.Slice(canonical, func(i, j int) bool {
 		left, right := canonical[i], canonical[j]

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -356,6 +357,7 @@ type ExternalConfig struct {
 type ExternalCapabilitiesConfig struct {
 	IdempotentLeaseID bool `yaml:"idempotentLeaseId,omitempty" json:"idempotentLeaseId,omitempty"`
 	PauseResume       bool `yaml:"pauseResume,omitempty" json:"pauseResume,omitempty"`
+	CacheVolumes      bool `yaml:"cacheVolumes,omitempty" json:"cacheVolumes,omitempty"`
 }
 
 type ExternalLifecycleConfig struct {
@@ -515,12 +517,78 @@ type CacheConfig struct {
 	Volumes        []CacheVolumeConfig
 }
 
+// CacheVolumeConfig is one cache volume. Group and Paths are for the external
+// provider: Group names the adapter store the volume lives in, and Paths
+// replaces the single Path so one named volume can span several directories.
 type CacheVolumeConfig struct {
-	Name     string `json:"name,omitempty"`
-	Key      string `json:"key"`
-	Path     string `json:"path"`
-	SizeGB   int    `json:"sizeGB,omitempty"`
-	Required bool   `json:"required,omitempty"`
+	Group    string   `json:"group,omitempty"`
+	Name     string   `json:"name,omitempty"`
+	Key      string   `json:"key"`
+	Path     string   `json:"path,omitempty"`
+	Paths    []string `json:"paths,omitempty"`
+	SizeGB   int      `json:"sizeGB,omitempty"`
+	Required bool     `json:"required,omitempty"`
+}
+
+// EffectivePaths is Paths when set, else the single Path.
+func (v CacheVolumeConfig) EffectivePaths() []string {
+	if len(v.Paths) > 0 {
+		return v.Paths
+	}
+	if strings.TrimSpace(v.Path) == "" {
+		return nil
+	}
+	return []string{v.Path}
+}
+
+const externalCacheVolumeProvider = "external"
+
+var externalCacheVolumeToken = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
+
+// ParseCacheVolumesEnv reads CRABBOX_CACHE_VOLUMES: a JSON array of volumes
+// when the value starts with '[', else the comma list of [name=]key:path.
+func ParseCacheVolumesEnv(raw string) ([]CacheVolumeConfig, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "[") {
+		return ParseCacheVolumeSpecs(splitCommaList(raw))
+	}
+	var decoded []CacheVolumeConfig
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, Exit(2, "CRABBOX_CACHE_VOLUMES JSON: %v", err)
+	}
+	volumes := make([]CacheVolumeConfig, 0, len(decoded))
+	for _, volume := range decoded {
+		volume, err := normalizeCacheVolume(volume)
+		if err != nil {
+			return nil, err
+		}
+		volumes = append(volumes, volume)
+	}
+	return volumes, nil
+}
+
+func normalizeCacheVolume(volume CacheVolumeConfig) (CacheVolumeConfig, error) {
+	volume.Group = strings.TrimSpace(volume.Group)
+	volume.Name = strings.TrimSpace(volume.Name)
+	volume.Key = strings.TrimSpace(volume.Key)
+	volume.Path = strings.TrimSpace(volume.Path)
+	if len(volume.Paths) > 0 {
+		paths := make([]string, len(volume.Paths))
+		for i, path := range volume.Paths {
+			paths[i] = strings.TrimSpace(path)
+		}
+		volume.Paths = paths
+	}
+	if volume.Key == "" && volume.Name != "" {
+		volume.Key = volume.Name
+	}
+	if volume.Name == "" {
+		volume.Name = volume.Key
+	}
+	if err := validateCacheVolume(volume, ""); err != nil {
+		return CacheVolumeConfig{}, err
+	}
+	return volume, nil
 }
 
 func ParseCacheVolumeSpecs(specs []string) ([]CacheVolumeConfig, error) {
@@ -555,7 +623,7 @@ func ParseCacheVolumeSpec(spec string) (CacheVolumeConfig, error) {
 		Key:  strings.TrimSpace(key),
 		Path: strings.TrimSpace(path),
 	}
-	if err := validateCacheVolume(volume); err != nil {
+	if err := validateCacheVolume(volume, ""); err != nil {
 		return CacheVolumeConfig{}, err
 	}
 	if volume.Name == "" {
@@ -567,7 +635,7 @@ func ParseCacheVolumeSpec(spec string) (CacheVolumeConfig, error) {
 func CacheVolumeStickyDiskSpecs(volumes []CacheVolumeConfig) []string {
 	specs := []string{}
 	for _, volume := range volumes {
-		if validateCacheVolume(volume) != nil {
+		if validateAbsoluteCacheVolume(volume) != nil {
 			continue
 		}
 		specs = append(specs, volume.Key+":"+volume.Path)
@@ -579,21 +647,18 @@ func normalizeFileCacheVolumes(files []fileCacheVolumeConfig) ([]CacheVolumeConf
 	volumes := make([]CacheVolumeConfig, 0, len(files))
 	for _, file := range files {
 		volume := CacheVolumeConfig{
-			Name:   strings.TrimSpace(file.Name),
-			Key:    strings.TrimSpace(file.Key),
-			Path:   strings.TrimSpace(file.Path),
+			Group:  file.Group,
+			Name:   file.Name,
+			Key:    file.Key,
+			Path:   file.Path,
+			Paths:  file.Paths,
 			SizeGB: file.SizeGB,
 		}
 		if file.Required != nil {
 			volume.Required = *file.Required
 		}
-		if volume.Key == "" && volume.Name != "" {
-			volume.Key = volume.Name
-		}
-		if volume.Name == "" {
-			volume.Name = volume.Key
-		}
-		if err := validateCacheVolume(volume); err != nil {
+		volume, err := normalizeCacheVolume(volume)
+		if err != nil {
 			return nil, err
 		}
 		volumes = append(volumes, volume)
@@ -601,18 +666,67 @@ func normalizeFileCacheVolumes(files []fileCacheVolumeConfig) ([]CacheVolumeConf
 	return volumes, nil
 }
 
-func validateCacheVolume(volume CacheVolumeConfig) error {
+// validateCacheVolume checks one volume against a provider's rules. Provider
+// "" is the parse-time check, before the provider is known: it admits what any
+// provider might take and ValidateCacheVolumesForProvider repeats the check
+// with the real one.
+func validateCacheVolume(volume CacheVolumeConfig, provider string) error {
+	switch provider {
+	case "":
+		return validateExternalCacheVolume(volume, false)
+	case externalCacheVolumeProvider:
+		return validateExternalCacheVolume(volume, true)
+	default:
+		return validateAbsoluteCacheVolume(volume)
+	}
+}
+
+// validateAbsoluteCacheVolume is the rule every provider but external keeps.
+func validateAbsoluteCacheVolume(volume CacheVolumeConfig) error {
 	if strings.TrimSpace(volume.Key) == "" {
 		return Exit(2, "cache volume key is required")
 	}
 	if strings.Contains(volume.Key, ":") {
 		return Exit(2, "cache volume key %q must not contain ':'", volume.Key)
 	}
+	if len(volume.Paths) > 0 || strings.TrimSpace(volume.Group) != "" {
+		return Exit(2, "cache volume %q: group and paths are only supported by the external provider", volume.Key)
+	}
 	if strings.TrimSpace(volume.Path) == "" {
 		return Exit(2, "cache volume path is required")
 	}
 	if !strings.HasPrefix(volume.Path, "/") {
 		return Exit(2, "cache volume path %q must be absolute", volume.Path)
+	}
+	if volume.SizeGB < 0 {
+		return Exit(2, "cache volume sizeGB must be non-negative")
+	}
+	return nil
+}
+
+func validateExternalCacheVolume(volume CacheVolumeConfig, strictKey bool) error {
+	if strings.TrimSpace(volume.Key) == "" {
+		return Exit(2, "cache volume key is required")
+	}
+	if strings.Contains(volume.Key, ":") {
+		return Exit(2, "cache volume key %q must not contain ':'", volume.Key)
+	}
+	if strictKey {
+		if !externalCacheVolumeToken.MatchString(volume.Key) {
+			return Exit(2, "cache volume key %q must match [A-Za-z0-9._-]{1,96}", volume.Key)
+		}
+		if volume.Group != "" && !externalCacheVolumeToken.MatchString(volume.Group) {
+			return Exit(2, "cache volume group %q must match [A-Za-z0-9._-]{1,96}", volume.Group)
+		}
+	}
+	paths := volume.EffectivePaths()
+	if len(paths) == 0 {
+		return Exit(2, "cache volume path is required")
+	}
+	for _, path := range paths {
+		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "~/") {
+			return Exit(2, "cache volume path %q must be absolute (or start with ~/ for the external provider)", path)
+		}
 	}
 	if volume.SizeGB < 0 {
 		return Exit(2, "cache volume sizeGB must be non-negative")
@@ -629,7 +743,12 @@ func ValidateCacheVolumesForProvider(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if provider.Spec().Features.Has(FeatureCacheVolume) {
+	for _, volume := range cfg.Cache.Volumes {
+		if err := validateCacheVolume(volume, provider.Spec().Name); err != nil {
+			return err
+		}
+	}
+	if ProviderFeaturesForConfig(provider, cfg).Has(FeatureCacheVolume) {
 		return nil
 	}
 	for _, volume := range cfg.Cache.Volumes {
@@ -2217,11 +2336,13 @@ type fileCacheConfig struct {
 }
 
 type fileCacheVolumeConfig struct {
-	Name     string `yaml:"name,omitempty"`
-	Key      string `yaml:"key,omitempty"`
-	Path     string `yaml:"path,omitempty"`
-	SizeGB   int    `yaml:"sizeGB,omitempty"`
-	Required *bool  `yaml:"required,omitempty"`
+	Group    string   `yaml:"group,omitempty"`
+	Name     string   `yaml:"name,omitempty"`
+	Key      string   `yaml:"key,omitempty"`
+	Path     string   `yaml:"path,omitempty"`
+	Paths    []string `yaml:"paths,omitempty"`
+	SizeGB   int      `yaml:"sizeGB,omitempty"`
+	Required *bool    `yaml:"required,omitempty"`
 }
 
 type fileProfileConfig struct {
@@ -3127,10 +3248,13 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 			cfg.credentialProvenance.externalConfig = credentialSource
 		}
 		pauseResume := cfg.External.Capabilities.PauseResume
+		cacheVolumes := cfg.External.Capabilities.CacheVolumes
 		if applyOptional(&cfg.External.Capabilities, file.External.Capabilities) {
 			if !trusted {
-				// Pause and resume run adapter commands, so only user config may opt in.
+				// Pause and resume run adapter commands, and cache volumes hand
+				// repo-chosen paths to the adapter, so only user config may opt in.
 				cfg.External.Capabilities.PauseResume = pauseResume
+				cfg.External.Capabilities.CacheVolumes = cacheVolumes
 			}
 			recordConfigInput(cfg, "external", inputSource, true)
 		}
@@ -5010,7 +5134,7 @@ func applyEnv(cfg *Config) error {
 		recordConfigInput(cfg, configInputGeneric, configInputEnvironment, true)
 	}
 	if volumes := os.Getenv("CRABBOX_CACHE_VOLUMES"); volumes != "" {
-		parsed, err := ParseCacheVolumeSpecs(splitCommaList(volumes))
+		parsed, err := ParseCacheVolumesEnv(volumes)
 		if err != nil {
 			return err
 		}

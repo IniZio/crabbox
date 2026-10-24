@@ -88,6 +88,39 @@ Docker volume name is derived from the cache key. Apple Container implements it
 with host cache directories under the local user cache directory mounted with
 Apple's `--volume` flag.
 
+The external provider advertises `cache-volume` only when trusted user config
+sets `external.capabilities.cacheVolumes: true` and no declarative lifecycle is
+configured; see [External provider](../providers/external.md#protocol). The
+adapter owns storage. Crabbox sends the volumes on `acquire`, prints the
+adapter's per-volume outcome as `cache volume NAME: OUTCOME (detail)` on stderr,
+and rolls the lease back when a `required` volume is `skipped`. Volumes for this
+provider differ from the others in three ways:
+
+- `path` may start with `~/`, which means the lease's login home, and `paths`
+  lists several directories for one named volume.
+- `group` names the adapter store that holds the volume. Volumes of one group
+  share one store, and each `name` is a directory inside it.
+- `key` and `group` must match `[A-Za-z0-9._-]{1,96}`.
+
+```yaml
+cache:
+  volumes:
+    - group: 7f3a9c1e04b2d655
+      name: gradle
+      key: 7f3a9c1e04b2d655-gradle
+      paths: [~/.gradle/caches, ~/.gradle/wrapper]
+```
+
+`CRABBOX_CACHE_VOLUMES` takes the same fields as a JSON array when the value
+starts with `[`; the comma list above still works for the other providers:
+
+```sh
+CRABBOX_CACHE_VOLUMES='[{"group":"7f3a9c1e04b2d655","name":"gradle","key":"7f3a9c1e04b2d655-gradle","paths":["~/.gradle/caches","~/.gradle/wrapper"],"sizeGB":20}]'
+```
+
+Other providers keep the absolute-path rule and reject `~/`, `paths`, and
+`group`.
+
 Providers that do not advertise `cache-volume` ignore non-required configured
 volumes. Required volumes fail early when the selected provider cannot honor
 them.
