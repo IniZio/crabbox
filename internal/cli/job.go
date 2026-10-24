@@ -274,8 +274,9 @@ func jobLeaseCreateArgsFor(cfg Config, job JobConfig, includeCacheVolumes bool) 
 	if job.Code != nil {
 		args = append(args, "--code="+fmt.Sprint(*job.Code))
 	}
-	if includeCacheVolumes && providerSupportsCacheVolumes(cfg, firstNonBlank(job.Provider, cfg.Provider)) {
-		for _, volume := range CacheVolumeStickyDiskSpecs(cfg.Cache.Volumes) {
+	providerName := firstNonBlank(job.Provider, cfg.Provider)
+	if includeCacheVolumes && providerSupportsCacheVolumes(cfg, providerName) {
+		for _, volume := range CacheVolumeStickyDiskSpecs(cfg.CacheVolumesForProvider(providerName)) {
 			args = append(args, "--cache-volume", volume)
 		}
 	}

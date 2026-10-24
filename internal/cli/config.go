@@ -515,6 +515,9 @@ type CacheConfig struct {
 	MaxGB          int
 	PurgeOnRelease bool
 	Volumes        []CacheVolumeConfig
+	// displacedTrusted holds trusted volumes that a later repository config
+	// list replaced in Volumes, so the external provider still sees them.
+	displacedTrusted []CacheVolumeConfig
 }
 
 // CacheVolumeConfig is one cache volume. Group and Paths are for the external
@@ -528,6 +531,47 @@ type CacheVolumeConfig struct {
 	Paths    []string `json:"paths,omitempty"`
 	SizeGB   int      `json:"sizeGB,omitempty"`
 	Required bool     `json:"required,omitempty"`
+	// Sealed marks a volume whose declaration has a seal step; the adapter
+	// publishes its group only when the seal marker is present.
+	Sealed bool `json:"sealed,omitempty"`
+	// untrusted is set on volumes that came from repository config.
+	untrusted bool
+}
+
+// CacheVolumesForProvider is the volume list a provider may act on. The
+// external provider forwards volumes to an adapter that mounts guest paths, so
+// it takes only volumes from trusted config, the environment and flags; every
+// other provider keeps the full list.
+func (c Config) CacheVolumesForProvider(provider string) []CacheVolumeConfig {
+	if provider != externalCacheVolumeProvider {
+		return c.Cache.Volumes
+	}
+	trusted := append([]CacheVolumeConfig(nil), c.Cache.displacedTrusted...)
+	for _, volume := range c.Cache.Volumes {
+		if !volume.untrusted {
+			trusted = append(trusted, volume)
+		}
+	}
+	return trusted
+}
+
+// setCacheVolumes replaces the configured volumes. A repository list replaces
+// them for every provider but keeps the trusted ones visible to external.
+func (c *CacheConfig) setCacheVolumes(volumes []CacheVolumeConfig, trusted bool) {
+	if trusted {
+		c.displacedTrusted = nil
+		c.Volumes = volumes
+		return
+	}
+	for _, volume := range c.Volumes {
+		if !volume.untrusted {
+			c.displacedTrusted = append(c.displacedTrusted, volume)
+		}
+	}
+	for i := range volumes {
+		volumes[i].untrusted = true
+	}
+	c.Volumes = volumes
 }
 
 // EffectivePaths is Paths when set, else the single Path.
@@ -653,6 +697,7 @@ func normalizeFileCacheVolumes(files []fileCacheVolumeConfig) ([]CacheVolumeConf
 			Path:   file.Path,
 			Paths:  file.Paths,
 			SizeGB: file.SizeGB,
+			Sealed: file.Sealed,
 		}
 		if file.Required != nil {
 			volume.Required = *file.Required
@@ -689,8 +734,8 @@ func validateAbsoluteCacheVolume(volume CacheVolumeConfig) error {
 	if strings.Contains(volume.Key, ":") {
 		return Exit(2, "cache volume key %q must not contain ':'", volume.Key)
 	}
-	if len(volume.Paths) > 0 || strings.TrimSpace(volume.Group) != "" {
-		return Exit(2, "cache volume %q: group and paths are only supported by the external provider", volume.Key)
+	if len(volume.Paths) > 0 || strings.TrimSpace(volume.Group) != "" || volume.Sealed {
+		return Exit(2, "cache volume %q: group, paths and sealed are only supported by the external provider", volume.Key)
 	}
 	if strings.TrimSpace(volume.Path) == "" {
 		return Exit(2, "cache volume path is required")
@@ -743,7 +788,8 @@ func ValidateCacheVolumesForProvider(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	for _, volume := range cfg.Cache.Volumes {
+	volumes := cfg.CacheVolumesForProvider(provider.Spec().Name)
+	for _, volume := range volumes {
 		if err := validateCacheVolume(volume, provider.Spec().Name); err != nil {
 			return err
 		}
@@ -751,7 +797,7 @@ func ValidateCacheVolumesForProvider(cfg Config) error {
 	if ProviderFeaturesForConfig(provider, cfg).Has(FeatureCacheVolume) {
 		return nil
 	}
-	for _, volume := range cfg.Cache.Volumes {
+	for _, volume := range volumes {
 		if volume.Required {
 			return Exit(2, "provider=%s does not support required cache volume %q", cfg.Provider, firstNonBlank(volume.Name, volume.Key))
 		}
@@ -2343,6 +2389,7 @@ type fileCacheVolumeConfig struct {
 	Paths    []string `yaml:"paths,omitempty"`
 	SizeGB   int      `yaml:"sizeGB,omitempty"`
 	Required *bool    `yaml:"required,omitempty"`
+	Sealed   bool     `yaml:"sealed,omitempty"`
 }
 
 type fileProfileConfig struct {
@@ -3807,7 +3854,7 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 			if err != nil {
 				return err
 			}
-			cfg.Cache.Volumes = volumes
+			cfg.Cache.setCacheVolumes(volumes, trusted)
 			recordConfigInput(cfg, configInputGeneric, inputSource, true)
 		}
 	}
@@ -5138,7 +5185,7 @@ func applyEnv(cfg *Config) error {
 		if err != nil {
 			return err
 		}
-		cfg.Cache.Volumes = parsed
+		cfg.Cache.setCacheVolumes(parsed, true)
 		recordConfigInput(cfg, configInputGeneric, configInputEnvironment, true)
 	}
 	if regions := os.Getenv("CRABBOX_CAPACITY_REGIONS"); regions != "" {

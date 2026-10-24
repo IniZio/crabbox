@@ -398,7 +398,7 @@ func validateCacheVolumesForLeaseReuse(cfg Config, existingLeaseID string) error
 	if existingLeaseID == "" {
 		return nil
 	}
-	required := CacheVolumeStickyDiskSpecs(requiredCacheVolumes(cfg.Cache.Volumes))
+	required := CacheVolumeStickyDiskSpecs(requiredCacheVolumes(cfg.CacheVolumesForProvider(canonicalClaimProvider(cfg.Provider))))
 	if len(required) == 0 {
 		return nil
 	}

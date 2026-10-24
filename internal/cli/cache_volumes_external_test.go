@@ -232,3 +232,134 @@ func TestCacheVolumeStickyDiskSpecsKeepsOnlyAbsoluteSinglePathVolumes(t *testing
 		t.Fatalf("specs=%v, want %v", got, want)
 	}
 }
+
+type externalNamedCacheVolumeTestProvider struct {
+	configuredCacheVolumeTestProvider
+}
+
+func (externalNamedCacheVolumeTestProvider) Spec() ProviderSpec {
+	return ProviderSpec{Name: externalCacheVolumeProvider, Kind: ProviderKindSSHLease, Targets: []TargetSpec{{OS: targetLinux}}}
+}
+
+func registerExternalNamedCacheVolumeTestProvider(t *testing.T) {
+	t.Helper()
+	original, had := providerRegistry[externalCacheVolumeProvider]
+	providerRegistry[externalCacheVolumeProvider] = externalNamedCacheVolumeTestProvider{}
+	t.Cleanup(func() {
+		if had {
+			providerRegistry[externalCacheVolumeProvider] = original
+		} else {
+			delete(providerRegistry, externalCacheVolumeProvider)
+		}
+	})
+}
+
+func cacheVolumesFile(t *testing.T, yamlText string) fileConfig {
+	t.Helper()
+	var file fileConfig
+	if err := yaml.Unmarshal([]byte(yamlText), &file); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+const repoCacheVolumesYAML = "cache:\n  volumes:\n    - {group: evil, name: ssh, key: evil-ssh, paths: ['~/.ssh']}\n"
+const userCacheVolumesYAML = "cache:\n  volumes:\n    - {group: g1, name: npm, key: g1-npm, paths: ['~/.npm'], sealed: true}\n"
+
+func TestRepoCacheVolumesAreIgnoredForExternalOnly(t *testing.T) {
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, cacheVolumesFile(t, repoCacheVolumesYAML), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Cache.Volumes) != 1 {
+		t.Fatalf("repo volume dropped from cfg.Cache.Volumes: %#v", cfg.Cache.Volumes)
+	}
+	if got := cfg.CacheVolumesForProvider(externalCacheVolumeProvider); len(got) != 0 {
+		t.Fatalf("external sees repo volumes: %#v", got)
+	}
+	if got := cfg.CacheVolumesForProvider("hetzner"); len(got) != 1 || got[0].Key != "evil-ssh" {
+		t.Fatalf("other providers lost the repo volume: %#v", got)
+	}
+}
+
+func TestTrustedCacheVolumesReachExternal(t *testing.T) {
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, cacheVolumesFile(t, userCacheVolumesYAML), true); err != nil {
+		t.Fatal(err)
+	}
+	want := []CacheVolumeConfig{{Group: "g1", Name: "npm", Key: "g1-npm", Paths: []string{"~/.npm"}, Sealed: true}}
+	if got := cfg.CacheVolumesForProvider(externalCacheVolumeProvider); !reflect.DeepEqual(got, want) {
+		t.Fatalf("trusted volumes = %#v, want %#v", got, want)
+	}
+
+	if err := applyFileConfigWithTrust(&cfg, cacheVolumesFile(t, repoCacheVolumesYAML), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.CacheVolumesForProvider(externalCacheVolumeProvider); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a repo volumes list displaced the trusted ones: %#v, want %#v", got, want)
+	}
+	if len(cfg.Cache.Volumes) != 1 || cfg.Cache.Volumes[0].Key != "evil-ssh" {
+		t.Fatalf("other providers must keep replace semantics: %#v", cfg.Cache.Volumes)
+	}
+
+	clearConfigEnv(t)
+	t.Setenv("CRABBOX_CACHE_VOLUMES", `[{"group":"g2","name":"go","key":"g2-go","paths":["~/go/pkg/mod"],"sealed":true}]`)
+	if err := applyEnv(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	envWant := []CacheVolumeConfig{{Group: "g2", Name: "go", Key: "g2-go", Paths: []string{"~/go/pkg/mod"}, Sealed: true}}
+	if got := cfg.CacheVolumesForProvider(externalCacheVolumeProvider); !reflect.DeepEqual(got, envWant) {
+		t.Fatalf("env volumes = %#v, want %#v", got, envWant)
+	}
+}
+
+func TestSealedRoundTripsEnvJSONAndYAML(t *testing.T) {
+	volumes, err := ParseCacheVolumesEnv(`[{"group":"g1x","name":"docker","key":"g1x-docker","paths":["~/docker","/var/lib/containerd"],"sealed":true},{"group":"g1","name":"npm","key":"g1-npm","paths":["~/.npm"]}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !volumes[0].Sealed || volumes[1].Sealed {
+		t.Fatalf("sealed flags = %v, %v", volumes[0].Sealed, volumes[1].Sealed)
+	}
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, cacheVolumesFile(t, userCacheVolumesYAML), true); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Cache.Volumes[0].Sealed {
+		t.Fatalf("yaml sealed lost: %#v", cfg.Cache.Volumes)
+	}
+}
+
+func TestValidateCacheVolumeExternalRoots(t *testing.T) {
+	for _, path := range []string{"/var/lib/containerd", "/var/lib/containers", "~/docker"} {
+		volume := CacheVolumeConfig{Group: "g1x", Name: "docker", Key: "g1x-docker", Paths: []string{path}, Sealed: true}
+		if err := validateCacheVolume(volume, externalCacheVolumeProvider); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+	other := CacheVolumeConfig{Key: "k", Path: "/opt/x", Sealed: true}
+	if err := validateCacheVolume(other, "hetzner"); err == nil || !strings.Contains(err.Error(), "only supported by the external provider") {
+		t.Fatalf("sealed on another provider: err=%v", err)
+	}
+}
+
+func TestRepoCacheVolumesDoNotLaunderThroughJobArgs(t *testing.T) {
+	registerExternalNamedCacheVolumeTestProvider(t)
+	hetzner := configuredCacheVolumeTestProvider{}
+	RegisterProvider(hetzner)
+	t.Cleanup(func() { delete(providerRegistry, hetzner.Spec().Name) })
+
+	repo := cacheVolumesFile(t, "cache:\n  volumes:\n    - {key: repo-vol, path: /opt/repo}\n")
+	for provider, wantFlag := range map[string]bool{externalCacheVolumeProvider: false, hetzner.Spec().Name: true} {
+		cfg := baseConfig()
+		cfg.Provider = provider
+		cfg.External.Capabilities.CacheVolumes = true
+		if err := applyFileConfigWithTrust(&cfg, repo, false); err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(jobLeaseCreateArgsFor(cfg, JobConfig{Provider: provider}, true), " ")
+		if got := strings.Contains(joined, "--cache-volume repo-vol:/opt/repo"); got != wantFlag {
+			t.Fatalf("provider=%s: job args %q, want flag=%v", provider, joined, wantFlag)
+		}
+	}
+}

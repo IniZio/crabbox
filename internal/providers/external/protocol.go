@@ -56,6 +56,7 @@ type desiredCacheVolume struct {
 	Paths    []string `json:"paths,omitempty"`
 	SizeGB   int      `json:"sizeGB,omitempty"`
 	Required bool     `json:"required,omitempty"`
+	Sealed   bool     `json:"sealed,omitempty"`
 }
 
 // cacheVolumeEcho is what an adapter reports back for one asked volume.
