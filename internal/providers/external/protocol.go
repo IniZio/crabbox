@@ -43,7 +43,29 @@ type desiredLease struct {
 	Slug    string `json:"slug"`
 	Name    string `json:"name"`
 	Class   string `json:"class,omitempty"`
+	// CacheVolumes is sent on acquire only, and only when the trusted
+	// cacheVolumes capability is on.
+	CacheVolumes []desiredCacheVolume `json:"cacheVolumes,omitempty"`
 }
+
+// desiredCacheVolume is the adapter-facing shape of core.CacheVolumeConfig.
+type desiredCacheVolume struct {
+	Group    string   `json:"group,omitempty"`
+	Name     string   `json:"name,omitempty"`
+	Key      string   `json:"key,omitempty"`
+	Paths    []string `json:"paths,omitempty"`
+	SizeGB   int      `json:"sizeGB,omitempty"`
+	Required bool     `json:"required,omitempty"`
+}
+
+// cacheVolumeEcho is what an adapter reports back for one asked volume.
+type cacheVolumeEcho struct {
+	Name    string `json:"name,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+const cacheVolumeOutcomeSkipped = "skipped"
 
 type protocolRepo struct {
 	Root      string `json:"root,omitempty"`
@@ -72,6 +94,8 @@ type protocolLease struct {
 	ServerType string            `json:"serverType,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	SSH        *protocolSSH      `json:"ssh,omitempty"`
+
+	CacheVolumes []cacheVolumeEcho `json:"cacheVolumes,omitempty"`
 }
 
 type protocolSSH struct {
