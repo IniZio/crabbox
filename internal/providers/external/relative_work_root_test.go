@@ -174,3 +174,24 @@ func TestUnreadableLoginHomeFailsAcquireAndReleasesLease(t *testing.T) {
 		})
 	}
 }
+
+func TestSSHFailureReadingLoginHomeFailsAcquireAndReleasesLease(t *testing.T) {
+	isolateCrabboxState(t)
+	dir := t.TempDir()
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"-G\" ] && exit 0; last=$a; done\n" +
+		"case \"$last\" in *HOME*) echo 'connection refused' >&2; exit 255;; esac\nexec /bin/sh -c \"$last\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	backend, runner := relativeRootBackend("moor", relativeRootAcquireReply)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, err := backend.Acquire(ctx, core.AcquireRequest{RequestedSlug: "s", Keep: false})
+	if err == nil || !strings.Contains(err.Error(), "read login home") {
+		t.Fatalf("err=%v", err)
+	}
+	if n := len(runner.operations); n != 2 || runner.operations[1] != "release" {
+		t.Fatalf("operations=%v, want acquire then release", runner.operations)
+	}
+}
