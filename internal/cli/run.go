@@ -5693,7 +5693,9 @@ func shouldWriteActionsHydrationStop(leaseID string, target SSHTarget) bool {
 	return leaseID != "" && target.Host != ""
 }
 
-var actionsHydrationStopSettleDelay = 20 * time.Second
+const actionsHydrationStopGrace = 20 * time.Second
+
+var actionsHydrationStopSettleDelay = actionsHydrationStopGrace
 
 func leaseDisplayID(lease CoordinatorLease) string {
 	if lease.CloudID != "" {
