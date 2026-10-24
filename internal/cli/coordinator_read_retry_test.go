@@ -162,6 +162,9 @@ func TestCoordinatorReadRetryRejectsTerminalResponsesAndMutations(t *testing.T) 
 }
 
 func TestCoordinatorReadRetryBodyTimeoutThenSuccess(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_OWNER", "alice@example.test")
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +301,9 @@ func TestCoordinatorReadRetryAfterParsingAndConnectionReset(t *testing.T) {
 }
 
 func TestCoordinatorReadRetryCurlResponsePolicy(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_OWNER", "alice@example.test")
 	t.Setenv("NO_PROXY", "127.0.0.1")
 	t.Setenv("no_proxy", "127.0.0.1")

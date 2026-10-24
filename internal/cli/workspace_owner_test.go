@@ -1406,6 +1406,9 @@ func TestWorkspaceOwnerWANBudgetContract(t *testing.T) {
 }
 
 func TestWorkspaceOwnerAcquisitionAllowsCompleteCallAfterStaleExpiry(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	calls := 0
 	var postExpiryBudget time.Duration
 	transport := workspaceOwnerTransportFunc(func(ctx context.Context, req workspaceOwnerRemoteRequest) (string, error) {
@@ -1581,6 +1584,9 @@ func TestWaitWorkspaceOwnerNoChildUsesTypedResult(t *testing.T) {
 }
 
 func TestWaitWorkspaceOwnerNoChildBoundsInspectToDeadline(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	calls := 0
 	owner := &workspaceOwner{transport: workspaceOwnerTransportFunc(func(ctx context.Context, _ workspaceOwnerRemoteRequest) (string, error) {
 		calls++
@@ -1657,6 +1663,9 @@ func TestWorkspaceOwnerNativeWindowsAmbiguousStageCleansExactWitness(t *testing.
 }
 
 func TestWorkspaceOwnerCanceledCleanupUsesShortDetachedBudget(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
 	prepared := workspaceOwnerRemotePreparation{cleanup: "cleanup", name: "witness.ps1"}
@@ -1819,6 +1828,9 @@ func TestWorkspaceOwnerNativeWindowsStreamPathsUseStagedWitnesses(t *testing.T) 
 }
 
 func TestWorkspaceOwnerPOSIXTransportIsLoginShellIndependent(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX transport execution requires POSIX shells")
 	}

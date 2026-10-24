@@ -133,6 +133,9 @@ func TestWorkspaceOwnerRenewalConfirmsAcknowledgementOnlyAfterCleanRetry(t *test
 // When every renewal call fails, the owner still fails closed, and no retry starts
 // that could finish after the last confirmed ownership lapses.
 func TestWorkspaceOwnerRenewalStopsAfterTwoRetries(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, response := range []string{"", "RENEWED"} {
 		t.Run("response="+response, func(t *testing.T) {
 			const (
@@ -194,6 +197,9 @@ func TestWorkspaceOwnerRenewalProtocolAnswerIsNotRetried(t *testing.T) {
 // dispatch a retry that could finish after the confirmed ownership lapses: the window
 // is rechecked after the wait, and the owner fails closed without another call.
 func TestWorkspaceOwnerRenewalRechecksTheWindowAfterALateWake(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, response := range []string{"", "RENEWED"} {
 		t.Run("response="+response, func(t *testing.T) {
 			const ttl = 3 * time.Second

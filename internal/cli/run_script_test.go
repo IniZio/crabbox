@@ -363,6 +363,9 @@ func TestSafeScriptNameKeepsBasenameAndHash(t *testing.T) {
 }
 
 func TestRunScriptFailureBundleScopesRetainedUploads(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX command fixture; native Windows capture has local-only coverage")
 	}

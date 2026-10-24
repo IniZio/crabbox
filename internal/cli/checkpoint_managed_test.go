@@ -1247,6 +1247,9 @@ func (backend *checkpointRenewalRaceBackend) Acquire(ctx context.Context, _ Acqu
 }
 
 func TestCheckpointManagedRenewalCompletionRace(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	tests := []struct {
 		name          string
 		renewalStatus int

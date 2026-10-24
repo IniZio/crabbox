@@ -12,6 +12,9 @@ import (
 )
 
 func TestSeededSyncDeltaRoundTripReusedWorkspace(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, exact := range []bool{false, true} {
 		t.Run(map[bool]string{false: "branch", true: "exact-commit"}[exact], func(t *testing.T) {
 			fixture := newGitOverlayFixture(t)
@@ -131,6 +134,9 @@ func TestSeededSyncDeltaRoundTripReusedWorkspace(t *testing.T) {
 }
 
 func TestSeededSyncDeltaRejectsUnverifiableRemote(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, kind := range []string{"head", "index", "assume-unchanged", "skip-worktree", "attributes", "untracked-attributes"} {
 		t.Run(kind, func(t *testing.T) {
 			fixture := newGitOverlayFixture(t)

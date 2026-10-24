@@ -81,6 +81,9 @@ func killEgressDaemonTestGroup(pid int) {
 // TestEgressDaemonConcurrentStartDoubleProvision covers the former
 // stop-check-start-write race with real supervisor processes.
 func TestEgressDaemonConcurrentStartDoubleProvision(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())          // isolate crabboxStateDir
 	t.Setenv("CRABBOX_EGRESS_DAEMON_TESTCHILD", "1") // inherited by spawned supervisors
 

@@ -455,6 +455,9 @@ esac
 }
 
 func TestSSHCommandEnvCleanupVerification(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX SSH fixture")
 	}

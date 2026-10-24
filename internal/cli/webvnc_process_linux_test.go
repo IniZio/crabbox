@@ -135,6 +135,9 @@ func differentLinuxBootID(bootID string) string {
 }
 
 func TestSSHControlMasterReleaseDoesNotRequireReaping(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const child = "CRABBOX_TEST_SSH_SUBREAPER"
 	if os.Getenv(child) == "1" {
 		// Only this isolated test child adopts the daemonized native masters.

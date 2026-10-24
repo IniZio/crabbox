@@ -102,6 +102,9 @@ func writeExecutable(t *testing.T, name, contents string) {
 }
 
 func TestCopyOverResolvedSSHArchiveFallbackWithOldRsync(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if os.PathSeparator == '\\' {
 		t.Skip("POSIX fake SSH helper")
 	}

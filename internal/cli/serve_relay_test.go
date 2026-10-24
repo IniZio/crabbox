@@ -81,6 +81,9 @@ func TestServeRelayStreamBackpressureAndClose(t *testing.T) {
 	}
 }
 func TestServeRelayCandidateFallbackAndFreshDirectPreference(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	isolateTestUserDirs(t)
 	_, private, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := ssh.NewSignerFromKey(private)

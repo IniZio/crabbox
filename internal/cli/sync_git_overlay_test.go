@@ -2376,6 +2376,9 @@ func TestRemotePrepareGitOverlayUsesTrustedTemporaryPaths(t *testing.T) {
 }
 
 func TestRemoteGitOverlayPreparePruneTransferAndFinalize(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX overlay integration")
 	}
@@ -3501,6 +3504,9 @@ func assertGitOverlayRecoveryCoherent(t *testing.T, workdir string, repo Repo) {
 }
 
 func TestRunGitOverlaySuccessFallbackAndLateLocalEdit(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX SSH runtime integration")
 	}
@@ -4360,6 +4366,9 @@ exit 99
 }
 
 func TestRunMissingOriginReplacementLeaseStaysPlainManifest(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX SSH runtime integration")
 	}

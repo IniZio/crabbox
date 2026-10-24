@@ -1009,6 +1009,9 @@ func (c *rfbPartialKeyUpConn) Write(p []byte) (int, error) {
 }
 
 func TestReleaseRFBKeyAfterErrorBoundsCleanup(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, acceptRelease := range []bool{false, true} {
 		t.Run(fmt.Sprintf("acceptRelease=%t", acceptRelease), func(t *testing.T) {
 			client, server := net.Pipe()

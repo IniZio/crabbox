@@ -112,6 +112,9 @@ exit 127
 // route already does: it owns the active stage while it runs, and a fatal
 // result from it stops the wait instead of being retried into a timeout.
 func TestWaitForSSHReadyProxyTransportProbeFollowsDirectContract(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("shell ssh fixture")
 	}

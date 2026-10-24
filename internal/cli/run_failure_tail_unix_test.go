@@ -13,6 +13,9 @@ import (
 )
 
 func TestRunFailureTailHasOneOutputOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	var longOutput strings.Builder
 	for i := 0; i < 45; i++ {
 		fmt.Fprintf(&longOutput, "stdout-line-%02d\n", i)

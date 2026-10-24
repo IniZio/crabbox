@@ -128,6 +128,9 @@ func runWebVNCCleanupBridge(ctx context.Context, root string) error {
 }
 
 func TestWebVNCDaemonCleanupRealSSHAfterRestart(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, shutdown := range []string{"stop", "cancel"} {
 		t.Run(shutdown, func(t *testing.T) {
 			root, port, cmd, identity, pidPath, _ := startWebVNCCleanupFixture(t, "")
@@ -312,6 +315,9 @@ func waitWebVNCCleanupRecord(t *testing.T, root string, previousChild int) webVN
 }
 
 func TestWebVNCDaemonCleanupRefusesUnconfirmedRealSSH(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, failure := range []string{"child-killed", "supervisor-killed", "blocked-cleanup", "abandoned-tunnel", "legacy-child-killed"} {
 		t.Run(failure, func(t *testing.T) {
 			root, port, cmd, identity, pidPath, _ := startWebVNCCleanupFixture(t, failure)

@@ -208,6 +208,9 @@ func TestStatusViewIncludesProviderMetadata(t *testing.T) {
 }
 
 func TestStatusViewKeepsFourSecondWindowsSSHProbe(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake ssh helper is only reliable on Unix hosts")
 	}
@@ -312,6 +315,9 @@ func TestStatusViewProbesRecordedWindowsPlatform(t *testing.T) {
 }
 
 func TestStatusWSL2ReadinessAllowsCompleteProbe(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake ssh helper is only reliable on Unix hosts")
 	}

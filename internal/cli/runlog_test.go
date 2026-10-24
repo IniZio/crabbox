@@ -186,6 +186,9 @@ func TestRetainedRunLogText(t *testing.T) {
 }
 
 func TestRunLogBufferUnicodeBoundaries(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, char := range []string{"é", "€", "😀"} {
 		for cut := 0; cut <= len(char); cut++ {
 			raw := char + strings.Repeat("a", maxRunLogBytes-len(char)+cut)
@@ -405,6 +408,9 @@ func captureTerminalLogWire(t *testing.T, raw []byte) map[string]any {
 }
 
 func TestTerminalLogFinishRunWireGolden(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	data, err := os.ReadFile("testdata/terminal-log-wire.json")
 	if err != nil {
 		t.Fatal(err)

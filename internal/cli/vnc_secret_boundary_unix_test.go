@@ -12,6 +12,9 @@ import (
 )
 
 func TestVNCSecretBoundaryForeground(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, route := range []bool{false, true} {
 		for _, ending := range []string{"cancel", "exit", "cancel-before-ready"} {
 			name := ending

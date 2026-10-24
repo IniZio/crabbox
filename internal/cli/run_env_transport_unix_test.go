@@ -18,6 +18,9 @@ import (
 )
 
 func TestSSHCommandEnvRealOpenSSH(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	client, err := exec.LookPath("ssh")
 	if err != nil {
 		t.Fatal(err)

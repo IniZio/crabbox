@@ -74,6 +74,9 @@ func TestCoordinatorReleaseCancelsClaimFenceWait(t *testing.T) {
 }
 
 func TestCoordinatorStopSharesCompletionBudget(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, phase := range []string{"initial inspection", "fresh inspection", "pending observation", "completed observation", "egress fence"} {
 		t.Run(phase, func(t *testing.T) {
 			clearConfigEnv(t)

@@ -46,6 +46,9 @@ func TestCoordinatorTransientUnavailable(t *testing.T) {
 }
 
 func TestCoordinatorReadCloudflare1101(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_OWNER", "alice@example.test")
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +67,9 @@ func TestCoordinatorReadCloudflare1101(t *testing.T) {
 }
 
 func TestCoordinatorRunAdmissionBackoffAndBinding(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_OWNER", "alice@example.test")
 	for _, tc := range []struct {
 		status                 int

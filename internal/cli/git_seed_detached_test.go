@@ -17,6 +17,9 @@ import (
 )
 
 func TestRunDetachedGitSeedPreservesManifestAuthority(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	realRsync, err := exec.LookPath("rsync")
 	if err != nil {
 		t.Skip("rsync unavailable")

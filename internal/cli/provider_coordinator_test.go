@@ -373,6 +373,9 @@ func TestCoordinatorStatusRedactsDaytonaSSHAccessToken(t *testing.T) {
 }
 
 func TestCoordinatorStatusKeepsFourSecondWindowsSSHProbe(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake ssh helper is only reliable on Unix hosts")
 	}
@@ -431,6 +434,9 @@ func TestCoordinatorStatusKeepsFourSecondWindowsSSHProbe(t *testing.T) {
 }
 
 func TestCoordinatorWSL2StatusAllowsCompleteProbe(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake ssh helper is only reliable on Unix hosts")
 	}

@@ -28,6 +28,9 @@ func boundaryPondInputs(t *testing.T, target SSHTarget) ([]pondMember, pondMeshS
 }
 
 func TestSSHForwardDetachedStartupBoundaries(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, owner := range []string{"vnc", "pond"} {
 		for _, mode := range []string{"gate", "unready", "descendant", "incomplete", "exit"} {
 			if owner == "vnc" && mode == "incomplete" {

@@ -32,6 +32,9 @@ func TestWaitForNamespaceProxy(t *testing.T) {
 }
 
 func TestWaitForNamespaceProxyRejectsMissingEndpoint(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	path := filepath.Join(t.TempDir(), "proxy.json")
 	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)

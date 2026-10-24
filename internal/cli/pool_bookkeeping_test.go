@@ -301,6 +301,9 @@ esac
 }
 
 func TestExternalRunnerBookkeepingUploadCancellation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	clearConfigEnv(t)
 	t.Setenv("CRABBOX_OWNER", "alice@example.com")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

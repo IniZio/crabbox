@@ -49,6 +49,9 @@ func TestRsyncStallTimeoutArguments(t *testing.T) {
 // The quiet transfer must outlive its idle budget; log/heartbeat output is not
 // progress. A peer that never sends protocol bytes must still time out.
 func TestRsyncStallTimeoutBehavior(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	realRsync, err := exec.LookPath("rsync")
 	if err != nil {
 		t.Skip("rsync not installed")

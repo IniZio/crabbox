@@ -14,6 +14,9 @@ import (
 )
 
 func TestCoordinatorPrepareResolveRecovery(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name                      string
 		prepare, release          bool
@@ -111,6 +114,9 @@ func TestCoordinatorPrepareResolveRecovery(t *testing.T) {
 }
 
 func TestCoordinatorPrepareResolveRejectsCanceledRecoveryResponse(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_OWNER", "alice@example.test")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

@@ -20,6 +20,9 @@ import (
 // runs the real local supervisor and completion controls with inert workers.
 // This covers CLI continuation, not SSH or Python installation readiness.
 func TestRunFunctionalPreflightContinuation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("requires the POSIX supervisor fixture")
 	}
@@ -373,6 +376,9 @@ func TestFunctionalPreflightCallerCancellationKeepsOwnerHealthy(t *testing.T) {
 }
 
 func TestFunctionalPOSIXPreflightOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX supervisor requires a POSIX host")
 	}
@@ -651,6 +657,9 @@ exit 1
 }
 
 func TestWorkspaceOwnerPOSIXFlockGate(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name, help, lockBody, body, timeout string
 		wantCalls                           int
@@ -884,10 +893,16 @@ func TestWorkspaceOwnerBSDGateRequiresConfirmedDirectoryCreation(t *testing.T) {
 }
 
 func TestWorkspaceOwnerBSDDetachedAndRenewingCommand(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	testWorkspaceOwnerDetachedAndRenewingCommand(t, workspaceOwnerBSDPath(t))
 }
 
 func TestWorkspaceOwnerPOSIXDetachedAndRenewingCommand(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("requires POSIX shell")
 	}

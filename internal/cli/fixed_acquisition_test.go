@@ -118,6 +118,9 @@ func TestFixedAcquisitionCommandHelper(t *testing.T) {
 }
 
 func TestFixedAcquisitionSerializesCLIReplayAcrossProcesses(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, pair := range [][2]string{{"warmup", "warmup"}, {"fork", "fork"}, {"warmup", "fork"}} {
 		t.Run(pair[0]+"-"+pair[1], func(t *testing.T) {
 			clearConfigEnv(t)

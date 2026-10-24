@@ -132,6 +132,9 @@ func TestArtifactChangeSnapshots(t *testing.T) {
 }
 
 func TestArtifactChangeSnapshotRejectsUnsafeFilesAndBounds(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, kind := range []string{"symlink", "parent symlink", "directory", "oversized", "aggregate"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
@@ -203,10 +206,16 @@ func TestRunArtifactChangeRejectsUnsupportedRoutes(t *testing.T) {
 }
 
 func TestRunArtifactChangeE2E(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	runArtifactChangeE2E(t, false)
 }
 
 func TestRunArtifactChangeWithFailureDownloadsE2E(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	runArtifactChangeE2E(t, true)
 }
 

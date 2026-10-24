@@ -216,6 +216,9 @@ func waitTunnelExit(t *testing.T, run *reverseForwardRun, wantCode int) error {
 }
 
 func TestPinnedReverseForwardExitsFiveWhenMasterExits(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	server, target := pinnedProxyFixture(t)
 	server.acceptRemoteForwards()
 	ctx, controls := withSSHControls(t)

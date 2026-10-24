@@ -312,6 +312,9 @@ func TestLocalHistoryStoreCommitFailureLeavesIncomplete(t *testing.T) {
 	}
 }
 func TestLocalHistoryStoreRetentionIncludesIncomplete(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	path := localHistoryTestHome(t)
 	for i := 0; i < localHistoryInactiveLimit+2; i++ {
 		record := localHistoryTestRecord(i + 10)
@@ -348,6 +351,9 @@ func TestLocalHistoryStoreRetentionIncludesIncomplete(t *testing.T) {
 	}
 }
 func TestLocalHistoryStoreActiveReservationAndPrune(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	localHistoryTestHome(t)
 	var writers []*localHistoryWriter
 	defer func() {
@@ -468,6 +474,9 @@ func TestLocalHistoryStoreMissingMetadataPrunesAsIncomplete(t *testing.T) {
 }
 
 func TestLocalHistoryStoreConcurrentCheckpointPrune(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	localHistoryTestHome(t)
 	record := localHistoryTestRecord(700)
 	writer, err := beginLocalHistory(record)

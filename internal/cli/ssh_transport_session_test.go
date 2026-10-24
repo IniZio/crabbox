@@ -1065,6 +1065,9 @@ func TestPrivateSSHTransportProbeKeepsSecretsOutOfArgvAndEnvironment(t *testing.
 }
 
 func TestPrivateSSHTransportProbeBudgetsEachFallbackPort(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if os.PathSeparator == '\\' {
 		t.Skip("POSIX fake SSH helper")
 	}

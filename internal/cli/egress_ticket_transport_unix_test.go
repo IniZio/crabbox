@@ -63,12 +63,18 @@ func TestEgressStartTicketTransportKeepsCredentialOffArgv(t *testing.T) {
 }
 
 func TestEgressStartTicketTransportFailureStopsBeforeHostMint(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, failure := range []string{"ssh", "readiness"} {
 		t.Run(failure, func(t *testing.T) { testEgressStartTicketTransport(t, failure) })
 	}
 }
 
 func TestEgressRunStartupAdmissionAndCleanup(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, failure := range []string{"run-active", "run-host", "run-host-cleanup"} {
 		t.Run(failure, func(t *testing.T) { testEgressStartTicketTransport(t, failure) })
 	}
