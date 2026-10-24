@@ -515,6 +515,9 @@ type CacheConfig struct {
 	MaxGB          int
 	PurgeOnRelease bool
 	Volumes        []CacheVolumeConfig
+	// Scope is the 16 hex digit tenant scope from CRABBOX_CACHE_SCOPE. The
+	// external provider forwards it with cache volumes.
+	Scope string
 	// displacedTrusted holds trusted volumes that a later repository config
 	// list replaced in Volumes, so the external provider still sees them.
 	displacedTrusted []CacheVolumeConfig
@@ -586,6 +589,8 @@ func (v CacheVolumeConfig) EffectivePaths() []string {
 }
 
 const externalCacheVolumeProvider = "external"
+
+var cacheScopePattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 var externalCacheVolumeToken = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
 
@@ -5186,6 +5191,13 @@ func applyEnv(cfg *Config) error {
 			return err
 		}
 		cfg.Cache.setCacheVolumes(parsed, true)
+		recordConfigInput(cfg, configInputGeneric, configInputEnvironment, true)
+	}
+	if scope := os.Getenv("CRABBOX_CACHE_SCOPE"); scope != "" {
+		if !cacheScopePattern.MatchString(scope) {
+			return Exit(2, "CRABBOX_CACHE_SCOPE must be 16 lowercase hex digits")
+		}
+		cfg.Cache.Scope = scope
 		recordConfigInput(cfg, configInputGeneric, configInputEnvironment, true)
 	}
 	if regions := os.Getenv("CRABBOX_CAPACITY_REGIONS"); regions != "" {
