@@ -46,6 +46,8 @@ type desiredLease struct {
 	// CacheVolumes is sent on acquire only, and only when the trusted
 	// cacheVolumes capability is on.
 	CacheVolumes []desiredCacheVolume `json:"cacheVolumes,omitempty"`
+	// CacheScope accompanies CacheVolumes and never travels without them.
+	CacheScope string `json:"cacheScope,omitempty"`
 }
 
 // desiredCacheVolume is the adapter-facing shape of core.CacheVolumeConfig.

@@ -574,8 +574,16 @@ home) or an absolute path. Every field is omitted when empty, and
 }
 ```
 
-`group` and `key` must match `[A-Za-z0-9._-]{1,96}`. The lease in the response
-reports what the adapter did with each volume:
+`group` and `key` must match `[A-Za-z0-9._-]{1,96}`.
+
+When `CRABBOX_CACHE_SCOPE` is set and the request carries `cacheVolumes`,
+`desired` also gets `"cacheScope": "<16 lowercase hex digits>"`, the tenant
+scope the adapter uses to partition its stores. Crabbox refuses any other
+value at startup with `CRABBOX_CACHE_SCOPE must be 16 lowercase hex digits`.
+The field is omitted when empty or when no volumes are sent, and it does not
+change the local claim scope.
+
+The lease in the response reports what the adapter did with each volume:
 
 ```json
 {"protocolVersion": 1, "lease": {"...": "...", "cacheVolumes": [

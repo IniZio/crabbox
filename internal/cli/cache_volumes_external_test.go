@@ -363,3 +363,28 @@ func TestRepoCacheVolumesDoNotLaunderThroughJobArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvCacheScope(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("CRABBOX_CACHE_SCOPE", "0123456789abcdef")
+	cfg := baseConfig()
+	if err := applyEnv(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cache.Scope != "0123456789abcdef" {
+		t.Fatalf("scope = %q", cfg.Cache.Scope)
+	}
+	for _, bad := range []string{"0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0", "../../etc/passwd", "g123456789abcdef"} {
+		t.Setenv("CRABBOX_CACHE_SCOPE", bad)
+		cfg := baseConfig()
+		err := applyEnv(&cfg)
+		if err == nil || !strings.Contains(err.Error(), "CRABBOX_CACHE_SCOPE") {
+			t.Fatalf("%q: err=%v, want CRABBOX_CACHE_SCOPE error", bad, err)
+		}
+	}
+	t.Setenv("CRABBOX_CACHE_SCOPE", "")
+	cfg = baseConfig()
+	if err := applyEnv(&cfg); err != nil || cfg.Cache.Scope != "" {
+		t.Fatalf("unset: scope=%q err=%v", cfg.Cache.Scope, err)
+	}
+}

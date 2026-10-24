@@ -350,3 +350,59 @@ func TestValidateCacheVolumesForExternalAcceptsContainerRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+const cacheScopeFixture = "0123456789abcdef"
+
+func TestAcquireSendsCacheScopeWithVolumes(t *testing.T) {
+	cfg := cacheVolumeConfig(cacheVolumeFixture...)
+	cfg.Cache.Scope = cacheScopeFixture
+	runner, _, _ := acquireWithCacheVolumes(t, cfg, cacheVolumeReply(""))
+	if len(runner.requests) == 0 || runner.requests[0].Desired == nil {
+		t.Fatalf("requests=%#v", runner.requests)
+	}
+	if got := runner.requests[0].Desired.CacheScope; got != cacheScopeFixture {
+		t.Fatalf("desired.cacheScope = %q, want %q", got, cacheScopeFixture)
+	}
+	data, err := json.Marshal(desiredLease{LeaseID: "l", Slug: "s", Name: "n", CacheScope: cacheScopeFixture})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"cacheScope":"`+cacheScopeFixture+`"`) {
+		t.Fatalf("wire form = %s", data)
+	}
+	bare, _ := json.Marshal(desiredLease{LeaseID: "l", Slug: "s", Name: "n"})
+	if strings.Contains(string(bare), "cacheScope") {
+		t.Fatalf("empty scope serialized: %s", bare)
+	}
+}
+
+func TestAcquireOmitsCacheScopeWithoutVolumes(t *testing.T) {
+	cfg := cacheVolumeConfig()
+	cfg.Cache.Scope = cacheScopeFixture
+	runner, _, _ := acquireWithCacheVolumes(t, cfg, cacheVolumeReply(""))
+	if len(runner.requests) == 0 || runner.requests[0].Desired == nil {
+		t.Fatalf("requests=%#v", runner.requests)
+	}
+	if got := runner.requests[0].Desired.CacheScope; got != "" {
+		t.Fatalf("scope sent without volumes: %q", got)
+	}
+	cfg = cacheVolumeConfig(cacheVolumeFixture...)
+	cfg.Cache.Scope = cacheScopeFixture
+	cfg.External.Capabilities.CacheVolumes = false
+	runner, _, _ = acquireWithCacheVolumes(t, cfg, cacheVolumeReply(""))
+	if got := runner.requests[0].Desired.CacheScope; got != "" {
+		t.Fatalf("scope sent without the capability: %q", got)
+	}
+}
+
+func TestClaimScopeIgnoresCacheScope(t *testing.T) {
+	for _, idempotent := range []bool{false, true} {
+		off := cacheVolumeConfig(cacheVolumeFixture...)
+		off.External.Capabilities.IdempotentLeaseID = idempotent
+		on := off
+		on.Cache.Scope = cacheScopeFixture
+		if externalClaimScope(off) != externalClaimScope(on) {
+			t.Fatalf("idempotentLeaseId=%t: cache scope changed the claim scope", idempotent)
+		}
+	}
+}

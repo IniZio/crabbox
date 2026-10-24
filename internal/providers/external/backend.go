@@ -70,6 +70,9 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	}
 	if b.cacheVolumesEnabled() {
 		desired.CacheVolumes = cacheVolumesForProtocol(b.cfg.CacheVolumesForProvider(providerName))
+		if len(desired.CacheVolumes) > 0 {
+			desired.CacheScope = b.cfg.Cache.Scope
+		}
 	}
 	response, err := b.invoke(ctx, protocolRequest{
 		Operation: "acquire",
