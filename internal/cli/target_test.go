@@ -892,3 +892,42 @@ func TestLeaseCreateFlagsDoNotApplyPortableOSImageToAzureWindows(t *testing.T) {
 		t.Fatalf("azure image=%q want %q", got, defaultAzureWindowsImage)
 	}
 }
+
+func TestLoadConfigExternalWorkRootPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"file only", nil, "/home/crabbox/work"},
+		{"generic env beats file", map[string]string{"CRABBOX_WORK_ROOT": "moor"}, "moor"},
+		{"provider env beats generic env", map[string]string{"CRABBOX_WORK_ROOT": "moor", "CRABBOX_EXTERNAL_WORK_ROOT": "other"}, "other"},
+		{"absolute env beats file", map[string]string{"CRABBOX_WORK_ROOT": "/srv/crabbox"}, "/srv/crabbox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			home := t.TempDir()
+			configPath := filepath.Join(home, "config.yaml")
+			if err := os.WriteFile(configPath, []byte("external:\n  workRoot: /home/crabbox/work\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			t.Setenv("CRABBOX_CONFIG", configPath)
+			t.Setenv("CRABBOX_PROVIDER", "external")
+			t.Setenv("CRABBOX_EXTERNAL_COMMAND", "provider-adapter")
+			t.Setenv("CRABBOX_WORK_ROOT", "")
+			t.Setenv("CRABBOX_EXTERNAL_WORK_ROOT", "")
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.External.WorkRoot != tc.want {
+				t.Fatalf("external workRoot=%q, want %q", cfg.External.WorkRoot, tc.want)
+			}
+		})
+	}
+}

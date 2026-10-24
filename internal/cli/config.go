@@ -4454,7 +4454,9 @@ func applyEnv(cfg *Config) error {
 	if externalProviderOutputExplicit {
 		markExternalProviderOutputExplicit(cfg, credentialSourceEnvironment)
 	}
-	cfg.External.WorkRoot = configInputEnvString(cfg, "external", cfg.External.WorkRoot, "CRABBOX_EXTERNAL_WORK_ROOT")
+	// The generic env root also beats a file's external.workRoot, so a caller
+	// can set one root for every provider without editing the user's config.
+	cfg.External.WorkRoot = configInputEnvString(cfg, "external", cfg.External.WorkRoot, "CRABBOX_EXTERNAL_WORK_ROOT", "CRABBOX_WORK_ROOT")
 	if value := os.Getenv("CRABBOX_EXTERNAL_ROUTING_FILE"); value != "" {
 		cfg.External.RoutingFile = value
 		recordConfigInput(cfg, "external", configInputEnvironment, true)

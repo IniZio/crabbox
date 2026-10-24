@@ -212,7 +212,7 @@ func validateConfig(cfg core.Config) error {
 	}
 	clean := path.Clean(workRoot)
 	if !strings.HasPrefix(clean, "/") {
-		return core.Exit(2, "external.workRoot %q must resolve to an absolute path", cfg.External.WorkRoot)
+		return validateRelativeWorkRoot(cfg.External.WorkRoot, clean)
 	}
 	safetyPath := clean
 	if cfg.TargetOS == core.TargetMacOS {
@@ -233,6 +233,18 @@ func validateConfig(cfg core.Config) error {
 	}
 	if usesPOSIXWorkRoot && isExternalPOSIXHomeWorkRoot(safetyPath, cfg.TargetOS, cfg.WindowsMode) {
 		return core.Exit(2, "external.workRoot %q is a home directory; choose a dedicated subdirectory", clean)
+	}
+	return nil
+}
+
+// validateRelativeWorkRoot accepts a root that Acquire and Resolve later join to
+// the lease's login home, which only the lease can report.
+func validateRelativeWorkRoot(raw, clean string) error {
+	if clean == "." {
+		return core.Exit(2, "external.workRoot %q is the login home; choose a dedicated subdirectory", raw)
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return core.Exit(2, "external.workRoot %q must stay inside the login home", raw)
 	}
 	return nil
 }

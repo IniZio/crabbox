@@ -42,6 +42,13 @@ the exact command, arguments, `external.config`, and connection inputs.
 Repository config cannot self-enable this contract, and changing the
 output-producing adapter contract invalidates an inherited approval.
 
+`workRoot` may also be relative, such as `moor`. Crabbox joins it to the login
+home that the lease's own SSH session reports (`/root/moor` for user `root`,
+`/home/crabbox/moor` for user `crabbox`), so an operator need not know the SSH
+user in advance. `CRABBOX_WORK_ROOT` and `CRABBOX_EXTERNAL_WORK_ROOT` override
+the file value. A home that cannot be read fails the lease instead of falling
+back to a default root. Windows native targets still need an absolute path.
+
 External SSH leases can target `linux`, `macos`, or `windows`. Keep `target:
 linux` for ordinary devboxes. Use `target: macos` when the external adapter
 returns an SSH-reachable Mac and you want Crabbox to drive native Screen Sharing
