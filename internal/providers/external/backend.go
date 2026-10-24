@@ -143,6 +143,13 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 		return core.LeaseTarget{}, err
 	}
+	if err := b.resolveRelativeWorkRoot(ctx, &lease); err != nil {
+		if !req.Keep {
+			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
+			core.RemoveExternalRouting(lease.LeaseID)
+		}
+		return core.LeaseTarget{}, err
+	}
 	lease.Server.Status = "ready"
 	lease.Server.Labels["state"] = "ready"
 	claimSlug := leaseSlugForClaim(lease, slug)
@@ -364,6 +371,9 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 	}
 	if !req.NoSSHWait {
 		if err := wait(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
+			return core.LeaseTarget{}, err
+		}
+		if err := b.resolveRelativeWorkRoot(ctx, &lease); err != nil {
 			return core.LeaseTarget{}, err
 		}
 	}
