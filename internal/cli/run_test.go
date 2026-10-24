@@ -618,6 +618,9 @@ func TestRunCommandInjectsReservedMetadataAcrossSSHCommandModes(t *testing.T) {
 }
 
 func TestRunCommandRetriesIdempotentRemoteWorkdirCreation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("shell ssh fixture")
 	}
@@ -1559,6 +1562,9 @@ func TestPOSIXRunTransportHelper(t *testing.T) {
 }
 
 func TestRunActionsWorkspaceRealFinalEffects(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX transport fixture; native identity probes have separate required coverage")
 	}
@@ -1751,6 +1757,9 @@ func TestRunActionsWorkspaceRealFinalEffects(t *testing.T) {
 }
 
 func TestRunDefaultSyncWithoutBash(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX transport fixture; native WSL is qualified separately")
 	}
@@ -3067,6 +3076,9 @@ func TestRunCommandRejectsReadyPoolLeaseOutput(t *testing.T) {
 }
 
 func TestRunCommandLocalContainerLeaseOutputSurvivesCommandAndSyncFailure(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, phase := range []string{"command", "sync"} {
 		t.Run(phase, func(t *testing.T) {
 			commandScript := "#!/bin/sh\ncase \"$1\" in *session-command-fail*) test -f \"$CRABBOX_SESSION_PATH\" || exit 98; exit 19 ;; esac\nexit 0\n"
@@ -4985,6 +4997,9 @@ func runCommandSyncOnlyFinalization(t *testing.T, missingEvents bool) {
 }
 
 func TestRunCommandTerminalReceiptMarksCoordinatorFinishFailureLocally(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	dir := t.TempDir()
 	isolateRunTestUserDirs(t, dir)
 	sshPath := filepath.Join(dir, "ssh")
@@ -5713,6 +5728,9 @@ exit 0
 }
 
 func TestRunCommandKeepOnFailureKeepsLeaseAfterLocalActionsHydrationFailure(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	clearConfigEnv(t)
 	dir := t.TempDir()
 	isolateRunTestUserDirs(t, dir)
@@ -6514,6 +6532,9 @@ func TestRunCommandFullResyncRehydratesAdoptedActionsWorkspaceInOrderUnderOwner(
 }
 
 func TestRunCommandFullResyncBindsRelativeActionsWorkspaceBeforeMutation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const rawWorkspace = "work/cbx_env_profile_test/crabbox"
 	const boundWorkspace = "/fixture-root/" + rawWorkspace
 	tests := []struct {
@@ -6574,6 +6595,9 @@ func TestRunCommandFullResyncBindsRelativeActionsWorkspaceBeforeMutation(t *test
 }
 
 func TestRunCommandFullResyncRejectsUnsupportedWorkflowBeforeRemoteMutation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	tests := []struct{ name, job string }{
 		{name: "expression", job: "    steps:\n      - run: echo \"${{ matrix.node }}\"\n"},
 		{name: "container", job: "    container: node:22\n    steps:\n      - run: echo unsupported\n"},
@@ -6757,6 +6781,9 @@ func TestFailureStreamCaptureRetainsMetadataAfterClose(t *testing.T) {
 }
 
 func TestRunCommandProofReportsExplicitStreamCaptures(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake ssh fixture")
 	}
@@ -8501,6 +8528,9 @@ func TestRemoteFailureCaptureCommandAvoidsDuplicateDirectoryChildren(t *testing.
 }
 
 func TestRemoteFailureCaptureLeavesCheckoutStatusUnchanged(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for POSIX capture command test")
 	}
@@ -8578,6 +8608,9 @@ func TestRemoteFailureCaptureLeavesCheckoutStatusUnchanged(t *testing.T) {
 }
 
 func TestRemoteFailureCaptureRemovesPartialArchiveOnFailure(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for POSIX capture command test")
 	}
@@ -8613,6 +8646,9 @@ exit 42
 }
 
 func TestRemoteFailureCaptureKeepsLargeFileListOffArgv(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for POSIX capture command test")
 	}
@@ -8724,6 +8760,9 @@ exec ` + shellQuote(realTar) + ` "$@"
 }
 
 func TestRemoteFailureCaptureUsesOutputDiskWhenTempIsSmall(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX capture command")
 	}
@@ -8866,6 +8905,9 @@ printf 'fake 9999999 0 %s 0%% /\n' "$available"
 }
 
 func TestRemoteFailureCaptureEnforcesWriterCaps(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX capture writer limits")
 	}
@@ -9012,6 +9054,9 @@ func TestRemoteRemoveFailureCaptureCommandRemovesBundle(t *testing.T) {
 }
 
 func TestRemoteFailureCaptureSelectsOnlyAvailableScriptFile(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX capture command")
 	}
@@ -9095,6 +9140,9 @@ func TestFailureEnvSummaryRedactsSecretValues(t *testing.T) {
 }
 
 func TestWriteLocalFailureBundleIncludesMetadataStreamsAndRemoteFiles(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for POSIX capture command test")
 	}

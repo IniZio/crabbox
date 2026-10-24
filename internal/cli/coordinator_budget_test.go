@@ -147,6 +147,9 @@ func TestCoordinatorHeartbeatHonorsCallerDeadlineWithoutReplay(t *testing.T) {
 }
 
 func TestCoordinatorReadCurlFallbackSharesCallerDeadline(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	clearConfigEnv(t)
 	// Keep the HTTP deadline independent of local git process startup.
 	t.Setenv("CRABBOX_OWNER", "alice@example.com")

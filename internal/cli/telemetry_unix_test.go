@@ -97,6 +97,9 @@ func TestLeaseTelemetryPreservesWorkspaceWitness(t *testing.T) {
 }
 
 func TestLeaseTelemetryPreservesCallerCancellation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, cause := range []string{"cancel", "deadline"} {
 		t.Run(cause, func(t *testing.T) {
 			tools := t.TempDir()

@@ -51,6 +51,9 @@ func (r runRecoveryOwnerTransport) Do(ctx context.Context, req workspaceOwnerRem
 }
 
 func TestRunLeaseRecoveryGuidance(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	RegisterProvider(runRecoveryTestProvider{})
 	t.Cleanup(func() { delete(providerRegistry, runRecoveryTestProvider{}.Spec().Name) })
 	for _, tc := range []struct {

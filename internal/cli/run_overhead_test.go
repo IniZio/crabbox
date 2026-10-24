@@ -13,6 +13,9 @@ import (
 )
 
 func TestBatchedUploadRetriesIdempotentPreparation(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name          string
 		first, second int

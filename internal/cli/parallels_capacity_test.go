@@ -135,6 +135,9 @@ func parallelsCapacityTestConfig(source string, maxVMs int) Config {
 // the clone, or replacing it with the advisory SelectParallelsFleetConfig,
 // reproduces that failure.
 func TestParallelsFleetCapacityBoundsConcurrentForks(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	isolateParallelsCapacityState(t)
 	const (
 		source = "linux-template"
@@ -192,6 +195,9 @@ func isolateParallelsCapacityState(t *testing.T) {
 }
 
 func TestParallelsCapacityExecutionIdentity(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name      string
 		host      string
@@ -318,6 +324,9 @@ func parallelsDirectHostCapacityTestConfig(source string, maxVMs int) Config {
 // whether to reserve at all. Supplying the limit only to the inventory check leaves
 // the reservation skipped and all 8 forks clone onto a host configured maxVMs: 2.
 func TestParallelsDirectHostCapacityBoundsConcurrentForks(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	isolateParallelsCapacityState(t)
 	const (
 		source = "linux-template"

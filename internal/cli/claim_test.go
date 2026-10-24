@@ -2406,6 +2406,9 @@ func TestClaimLeaseForRepoProviderScopePondEndpointStoresInitialClaim(t *testing
 }
 
 func TestLeaseClaimConcurrentMutationsRemainAtomic(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	leaseID := "cbx_atomic"
 	if err := ClaimLeaseForRepoProvider(leaseID, "atomic", "docker-sandbox", "/repo", time.Minute, false); err != nil {

@@ -153,6 +153,9 @@ func assertWSLLinuxAbsent(t *testing.T, f *wslLinuxFixture) {
 }
 
 func TestFunctionalWSLPreflightOwnerCompletion(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const nonce = "0123456789abcdef0123456789abcdef"
 	for _, tc := range []struct {
 		name, state     string

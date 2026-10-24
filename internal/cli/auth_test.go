@@ -638,6 +638,9 @@ func TestLoginRejectsInheritedCredentialsForRepositoryBroker(t *testing.T) {
 }
 
 func TestGitHubLoginNoBrowserStoresReturnedToken(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
@@ -1027,6 +1030,9 @@ func TestGitHubLoginRejectsMismatchedRedirectOrigin(t *testing.T) {
 }
 
 func TestGitHubLoginMigratesToAllowedRedirectOrigin(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))

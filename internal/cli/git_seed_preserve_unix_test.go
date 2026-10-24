@@ -74,6 +74,9 @@ func TestSyncWindowsOriginSeedPreservesRawWorkspace(t *testing.T) {
 }
 
 func TestRunOriginSeedRetryPreservesRawWorkspace(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	realRsync, err := exec.LookPath("rsync")
 	if err != nil {
 		t.Skip("rsync unavailable")

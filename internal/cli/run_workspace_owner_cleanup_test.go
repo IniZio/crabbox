@@ -274,6 +274,9 @@ exit 0
 }
 
 func TestRunCommandLeaseCleanupQuiescesWorkspaceOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	tests := []struct {
 		name                  string
 		command               string
@@ -566,6 +569,9 @@ func TestRunCommandRetainedLeaseRetainsFailClosedRenewal(t *testing.T) {
 }
 
 func TestRunFailureDigestCleanupOutcomes(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, test := range []struct {
 		name          string
 		flags         []string
@@ -825,6 +831,9 @@ func (p replacementRunProvider) Configure(cfg Config, rt Runtime) (Backend, erro
 }
 
 func TestRunCommandReplacesLeaseWithFreshWorkspaceOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, scenario := range []string{"success", "command failure", "caller cancellation", "retained release"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := setupRunCleanupWorkspaceOwnerTest(t)

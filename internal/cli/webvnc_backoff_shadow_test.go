@@ -8,6 +8,9 @@ import (
 )
 
 func TestWebVNCBridgeSlotBacksOffAcrossConnectFailures(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	// Leading whitespace fails split-agent URL validation before any network dial.
 	t.Setenv("CRABBOX_WEBVNC_AGENT_BASE_URL", " https://invalid.example:443")
 

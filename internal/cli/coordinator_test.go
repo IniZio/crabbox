@@ -1339,6 +1339,9 @@ func TestCoordinatorHeartbeatUsesControlWebSocket(t *testing.T) {
 }
 
 func TestCoordinatorHeartbeatMintsTokenBeforeControlDialTimeout(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_TOKEN_HELPER", "1")
 	t.Setenv("CRABBOX_TOKEN_HELPER_VALUE", "slow-token")
 	t.Setenv("CRABBOX_TOKEN_HELPER_DELAY", "1600ms")

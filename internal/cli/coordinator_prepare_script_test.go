@@ -29,6 +29,9 @@ func (b *coordinatorPrepareScriptBackend) Resolve(ctx context.Context, req Resol
 }
 
 func TestCoordinatorPrepareRecoveryPrecedesScriptAndDoesNotReplayFailure(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	p, b, dir := setupSSHScriptRun(t)
 	started := time.Now()
 	entered, release := make(chan struct{}), make(chan struct{})

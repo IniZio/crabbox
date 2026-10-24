@@ -73,6 +73,9 @@ func TestRunAdmissionRetainsInvocationCancellation(t *testing.T) {
 }
 
 func TestRunAdmissionRecoversCommittedResponseWithoutChangingBinding(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	var mu sync.Mutex
 	var bodies [][]byte
 	committed := 0
@@ -213,6 +216,9 @@ func TestRunAdmissionCannotMoveToAnotherCoordinator(t *testing.T) {
 }
 
 func TestRunAdmissionCannotReuseFieldsFromFailedDecode(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	calls := 0
 	client := &CoordinatorClient{BaseURL: "https://example.test", Client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
@@ -361,6 +367,9 @@ func TestRunAdmissionFailureRequiresCompleteTerminalAcknowledgment(t *testing.T)
 }
 
 func TestRunAdmissionFailureRetainsEffectiveAuthenticationAndRedactsWarning(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_TOKEN_HELPER", "1")
 	t.Setenv("CRABBOX_TOKEN_HELPER_VALUE", "first-token")
 	t.Setenv("CRABBOX_OWNER", "alice@example.com")
@@ -414,6 +423,9 @@ func TestRunAdmissionFailureRetainsEffectiveAuthenticationAndRedactsWarning(t *t
 }
 
 func TestRunAdmissionAuthenticationCaptureUsesOriginalBudget(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("CRABBOX_TOKEN_HELPER", "1")
 	t.Setenv("CRABBOX_TOKEN_HELPER_VALUE", "first-token")
 	t.Setenv("CRABBOX_TOKEN_HELPER_DELAY", "30s")

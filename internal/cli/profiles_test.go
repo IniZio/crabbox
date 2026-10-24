@@ -1414,6 +1414,9 @@ func TestRunArtifactNestedGlobRequiresExactDirectoryEntry(t *testing.T) {
 }
 
 func TestRunArtifactNonRecursiveGlobBoundsEnumeration(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("artifact glob scripts require a POSIX target")
 	}

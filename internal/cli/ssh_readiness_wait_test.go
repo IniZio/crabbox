@@ -73,6 +73,9 @@ printf '%s\n' "$n" > "$CRABBOX_WAIT_POLLS"
 }
 
 func TestWaitForSSHReadyLinuxGuestWait(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, mode := range []string{"ready", "timeout", "host-key", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			target, dir := readinessWaitFixture(t, mode)
@@ -135,6 +138,9 @@ func TestWaitForSSHReadyLinuxGuestWait(t *testing.T) {
 }
 
 func TestWaitForSSHReadyNonLinuxKeepsPolling(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, osName := range []string{targetMacOS, targetWindows, targetLinux} {
 		t.Run(osName, func(t *testing.T) {
 			target, dir := readinessWaitFixture(t, "ready")

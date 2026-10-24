@@ -3597,6 +3597,9 @@ func TestRemoteFinalizeSyncPlainManifestSuppressesOriginState(t *testing.T) {
 }
 
 func TestRemoteFinalizeSyncHydratesForRepositoryDepth(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	fixture := newGitCoherenceFixture(t)
 	// Exceed the fallback depth so accidentally deepening a complete clone is observable.
 	const extraCommits = 1001
@@ -3807,6 +3810,9 @@ func TestRemoteFinalizeSyncRejectsMissingManifests(t *testing.T) {
 }
 
 func TestRemoteFinalizeSyncWaitsForLiveOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const finalizeToken = "0123456789abcdef0123456789abcdef"
 	workdir := t.TempDir()
 	metaDir := filepath.Join(workdir, ".crabbox")
@@ -3849,6 +3855,9 @@ func TestRemoteFinalizeSyncWaitsForLiveOwner(t *testing.T) {
 }
 
 func TestRemoteFinalizeSyncRecoversDeadOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const finalizeToken = "0123456789abcdef0123456789abcdef"
 	workdir := t.TempDir()
 	metaDir := filepath.Join(workdir, ".crabbox")
@@ -3902,6 +3911,9 @@ func TestRemoteFinalizeSyncWaitIsContextBounded(t *testing.T) {
 }
 
 func TestRemoteSyncFinalizeLockSerializesLiveOwner(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	metaDir := t.TempDir()
 	acquiredPath := filepath.Join(metaDir, "first-acquired")
 	releasePath := filepath.Join(metaDir, "release-first")
@@ -4640,6 +4652,9 @@ exec /bin/mv "$@"
 }
 
 func TestRemoteGitCoherenceRollsBackFailuresAndRetries(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	f := newGitCoherenceFixture(t)
 	for _, failure := range []string{"read-tree", "write-tree", "diff-files", "cas", "fingerprint", "complete"} {
 		t.Run(failure, func(t *testing.T) {
@@ -5485,6 +5500,9 @@ func runGitControlWithShellHook(t *testing.T, hook, command string) ([]byte, err
 }
 
 func TestRemoteGitControlsIgnoreShellHooks(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX Git control shell")
 	}
@@ -5710,6 +5728,9 @@ func TestRemoteGitSeedClassifiesRuntimeOriginFailures(t *testing.T) {
 }
 
 func TestRemoteFinalizeRuntimeOriginFallbackRetriesCommittedManifest(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX Git finalize integration")
 	}

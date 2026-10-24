@@ -283,6 +283,9 @@ func TestPrewarmFailureDoesNotReleaseDelegatedProvider(t *testing.T) {
 }
 
 func TestPrewarmCoordinatorCleanupReleasesByIDWhenResolveFails(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	released := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -92,6 +92,9 @@ exit 23
 }
 
 func TestSSHTransferIPv6SessionLifetimeAndEnvironment(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, transfer := range []string{"rsync", "scp"} {
 		for _, mode := range []string{"success", "failure", "cancel", "timeout"} {
 			t.Run(transfer+"/"+mode, func(t *testing.T) {

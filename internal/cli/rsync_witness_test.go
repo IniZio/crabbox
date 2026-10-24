@@ -77,6 +77,9 @@ func TestRsyncWitnessRetainsStopUntilQuiescent(t *testing.T) {
 // local shell. The registered PID must be the receiver, and a failed receiver
 // must not leave a detached guard blocking registration on the reused lease.
 func TestRsyncReceiverWitnessReusedLease(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	binary, err := exec.LookPath("rsync")
 	if err != nil {
 		t.Skip("rsync unavailable")

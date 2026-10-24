@@ -669,6 +669,9 @@ func TestControllerAcquireIdentityEnvironmentIsStrippedFromProviderChildren(t *t
 }
 
 func TestControllerAcquireIdentityGateDoesNotSerializeBehindUnauthenticatedConnection(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	identity := controllerAcquireIdentity{
 		LeaseID: "cbx_123456789abc", Slug: "stable-slug", Provider: "external", ResourceID: "provider/resource-123",
 	}
@@ -704,6 +707,9 @@ func TestControllerAcquireIdentityGateDoesNotSerializeBehindUnauthenticatedConne
 }
 
 func TestControllerAcquireIdentityGatePreAuthDeadlineDoesNotBoundPersistence(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	identity := controllerAcquireIdentity{
 		LeaseID: "cbx_123456789abc", Slug: "stable-slug", Provider: "external", ResourceID: "provider/resource-123",
 	}
@@ -2130,6 +2136,9 @@ fi
 }
 
 func TestControllerDesktopConnectionRejectsHostilePreboundDirectSSHPort(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture")
 	}

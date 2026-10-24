@@ -780,6 +780,9 @@ func (c rfbTimeoutErrorConn) Write(p []byte) (int, error) {
 }
 
 func TestRelayWebSocketVNCWithARDAuthenticationTimeoutIsConfigurable(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Run("short timeout", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -1027,6 +1030,9 @@ func TestForceRFBVNCAuthenticationStopsOnCancellation(t *testing.T) {
 }
 
 func TestForceRFBVNCAuthenticationStopsAtDeadlineWhenBrowserStallsAfterServerVersion(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	browser, bridgeBrowser := net.Pipe()

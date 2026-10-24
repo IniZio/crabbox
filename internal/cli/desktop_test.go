@@ -49,6 +49,9 @@ func TestDesktopLaunchRemoteCommandUsesDetachedPOSIXSession(t *testing.T) {
 }
 
 func TestDesktopLaunchRemoteCommandRejectsExitedPOSIXProcess(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	remote := desktopLaunchRemoteCommand(
 		SSHTarget{TargetOS: targetLinux},
 		"",
@@ -66,6 +69,9 @@ func TestDesktopLaunchRemoteCommandRejectsExitedPOSIXProcess(t *testing.T) {
 }
 
 func TestDesktopLaunchRemoteCommandAcceptsNewVisibleWindowFromWrapper(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "window-created")
 	xdotool := `#!/bin/sh
@@ -94,6 +100,9 @@ exit 1
 }
 
 func TestDesktopLaunchRemoteCommandRejectsFailedWrapperWithNewWindow(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "error-window-created")
 	xdotool := `#!/bin/sh
@@ -126,6 +135,9 @@ exit 1
 }
 
 func TestDesktopLaunchRemoteCommandAcceptsExistingWindowHandoff(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "existing-window-focused")
 	xdotool := `#!/bin/sh
@@ -181,6 +193,9 @@ func TestDesktopLaunchRemoteCommandChecksLinuxTerminalVisibility(t *testing.T) {
 }
 
 func TestDesktopLaunchRemoteCommandAcceptsRetitledTerminalWindow(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "terminal-window-created")
 	xdotool := `#!/bin/sh

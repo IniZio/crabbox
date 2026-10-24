@@ -330,6 +330,9 @@ func TestWatchIdleExitWaitsForActiveRun(t *testing.T) {
 }
 
 func TestWatchRerunsOnQualifyingChange(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	session := newWatchTestSession(root, executor.run, 25*time.Millisecond, 2*time.Second, nil)
@@ -352,6 +355,9 @@ func TestWatchRerunsOnQualifyingChange(t *testing.T) {
 }
 
 func TestWatchIgnoredChurnDoesNotTriggerRunOrResetIdle(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	watchTestWrite(t, root, ".crabboxignore", "scratch\n")
 	executor := newWatchTestExecutor()
@@ -389,6 +395,9 @@ func TestWatchIgnoredChurnDoesNotTriggerRunOrResetIdle(t *testing.T) {
 }
 
 func TestWatchWatchesNewlyCreatedDirectories(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	session := newWatchTestSession(root, executor.run, 25*time.Millisecond, 3*time.Second, nil)
@@ -410,6 +419,9 @@ func TestWatchWatchesNewlyCreatedDirectories(t *testing.T) {
 }
 
 func TestWatchDebounceCoalescesBurstIntoOneRun(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	session := newWatchTestSession(root, executor.run, 150*time.Millisecond, 2*time.Second, nil)
@@ -431,6 +443,9 @@ func TestWatchDebounceCoalescesBurstIntoOneRun(t *testing.T) {
 }
 
 func TestWatchChangeDuringRunQueuesExactlyOnePendingRerun(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	executor.release = make(chan struct{})
@@ -457,6 +472,9 @@ func TestWatchChangeDuringRunQueuesExactlyOnePendingRerun(t *testing.T) {
 }
 
 func TestWatchRunsQueuedRerunBeforeIdleExit(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	executor.release = make(chan struct{}, 1)
@@ -481,6 +499,9 @@ func TestWatchRunsQueuedRerunBeforeIdleExit(t *testing.T) {
 }
 
 func TestWatchContinuesAfterNonzeroRemoteExit(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	executor.errs[1] = ExitError{Code: 1, Message: "remote command exited 1"}
@@ -518,6 +539,9 @@ func TestWatchStopsOnFatalIterationError(t *testing.T) {
 }
 
 func TestWatchReloadsCrabboxIgnoreMidSession(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	executor := newWatchTestExecutor()
 	session := newWatchTestSession(root, executor.run, 25*time.Millisecond, 700*time.Millisecond, nil)
@@ -898,6 +922,9 @@ func TestWatchQueuesReincludedDescendantWhenExcludedParentIsRemoved(t *testing.T
 }
 
 func TestWatchIncludeWhitelistFiltersReruns(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	root := newWatchGitRepo(t)
 	watchTestWrite(t, root, "src/app.go", "package app\n")
 	watchTestGit(t, root, "add", "src")

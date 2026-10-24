@@ -162,6 +162,9 @@ esac
 }
 
 func TestSSHReverseForwardWaitsForForwardReplyAndReapsProcessGroup(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name, hostEnd, forward, json, plain string
 	}{
@@ -246,6 +249,9 @@ func testSSHReverseForwardLifecycle(t *testing.T, boxPort string, host reverseTu
 }
 
 func TestSSHReverseForwardTimeoutExit5Redacted(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	writeFakeReverseSSH(t, "")
 	stdout := newSynchronizedBuffer(0)
 	err := runSSHReverseForward(t.Context(), SSHTarget{User: "secret-user", AuthSecret: true, Host: "example.test", Port: "22", DisableHostKeyChecking: true}, "18080", reverseTunnelHost{port: "9000"}, true, &stdout, 800*time.Millisecond)

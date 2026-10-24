@@ -162,6 +162,9 @@ exit "$code"
 }
 
 func TestHybridSSHScriptRun(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, tc := range []struct {
 		name, prefix string
 		code         int
@@ -277,6 +280,9 @@ func TestHybridSSHScriptPrewarmAdmissionUsesScriptRoute(t *testing.T) {
 }
 
 func TestHybridSSHScriptCancellationAndSameLeaseReplay(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	p, b, dir := setupSSHScriptRun(t)
 	started := filepath.Join(dir, "script-started")
 	stop := filepath.Join(dir, "script-stop")

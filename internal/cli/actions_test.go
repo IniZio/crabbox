@@ -409,6 +409,9 @@ exit 99
 }
 
 func TestGitHubActionsRunnerSeedsOnlyOwnedDefaultToolCache(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, name := range []string{"bash", "python3", "tar"} {
 		if _, err := exec.LookPath(name); err != nil {
 			t.Skip(name + " is required")
@@ -1973,6 +1976,9 @@ exit 0
 }
 
 func TestExecuteLocalActionsHydrationUsesCallerPlainManifestMode(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("shell ssh fixture")
 	}

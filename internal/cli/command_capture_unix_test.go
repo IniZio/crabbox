@@ -68,6 +68,9 @@ func TestCommandFileCaptureRetainsObservedOverflow(t *testing.T) {
 }
 
 func TestExecCommandRunnerFileCapture(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv(controllerProcessTreeOwnedEnv, "")
 	for _, tc := range []struct {
 		mode       string

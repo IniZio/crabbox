@@ -195,6 +195,9 @@ func TestJoinedLocalCommandPreservesConfiguredPipeWait(t *testing.T) {
 }
 
 func TestJoinedLocalCommandClosesFiniteDescendants(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	t.Setenv(controllerProcessTreeOwnedEnv, "")
 	for _, tc := range []struct {
 		mode  string

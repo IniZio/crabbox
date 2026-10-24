@@ -70,6 +70,9 @@ func TestSSHJumpCandidateOrdering(t *testing.T) {
 	}
 }
 func TestSSHJumpCandidatePinnedProbe(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	goodKey := jumpTestSigner(t)
 	wrong, _ := jumpProbeServer(t, jumpTestSigner(t), false)
 	stalled, _ := jumpProbeServer(t, goodKey, true)

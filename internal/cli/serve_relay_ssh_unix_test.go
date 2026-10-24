@@ -16,6 +16,9 @@ import (
 )
 
 func TestServeRelaySSHAllowsPairingBeforeHandshake(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		t.Fatal(err)

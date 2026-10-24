@@ -85,6 +85,9 @@ func egressPackFixture(t *testing.T) string {
 }
 
 func TestEgressHelperPackSelectionAndAtomicInstall(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	manifest := egressPackFixture(t)
 	controller, _ := os.Executable()
 	source, err := egressRuntimeSource(t.Context(), controller, manifest)

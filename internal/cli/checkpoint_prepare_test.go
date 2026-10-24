@@ -12,6 +12,9 @@ import (
 )
 
 func TestNativeImagePreparationPreservesCurrentBootStatus(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("preparation fixture requires Python 3")

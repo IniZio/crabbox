@@ -20,6 +20,9 @@ import (
 )
 
 func TestAuthoritativeKnownHostsCertificatesWithOpenSSH(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		t.Skip("OpenSSH unavailable")

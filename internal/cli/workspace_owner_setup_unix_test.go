@@ -439,6 +439,9 @@ func TestWorkspaceOwnerGitSeedPreservesOriginFailure(t *testing.T) {
 }
 
 func TestWorkspaceOwnerPOSIXGateWaitClosesStreamsWithoutSupervisor(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, releaseLock := range []bool{false, true} {
 		t.Run(fmt.Sprintf("release-lock-%t", releaseLock), func(t *testing.T) {
 			home, owner := workspaceOwnerSetupFixture(t)

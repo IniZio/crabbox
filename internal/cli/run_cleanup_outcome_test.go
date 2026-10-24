@@ -18,6 +18,9 @@ import (
 )
 
 func TestRunCoordinatorCleanupOutcomes(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	configureCoordinatorReleaseTestTiming(t, time.Second, 0)
 	deleting, retained := true, false
 	for _, tc := range []struct {

@@ -40,6 +40,9 @@ func (p precedenceAuditProvider) ConfigureDoctor(cfg Config, _ Runtime) (DoctorB
 // Exercise the command parsers and their real loading paths. The provider
 // boundary records the result and refuses all resource or network operations.
 func TestCommandSelectorPrecedence(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	commands := []struct {
 		name string
 		run  func(App, context.Context, []string) error

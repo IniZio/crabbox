@@ -465,6 +465,9 @@ func writeForwardSSHHostKeys(t *testing.T, f forwardBoundaryFixture, servers ...
 }
 
 func TestCoordinatorReleaseJoinsSSHControlMasters(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	testCoordinatorReleaseJoinsSSHControlMasters(t, "coordinator", "configured HostName", "configured ProxyJump", "partial local failure", "stale local socket", "direct artifact owner")
 }
 
@@ -845,6 +848,9 @@ func assertForwardPayload(t *testing.T, port string) {
 }
 
 func TestSSHForwardRealDetachedAfterUnlink(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, owner := range []string{"vnc", "pond", "vnc-parent", "pond-parent"} {
 		for _, hops := range []int{0, 2} {
 			t.Run(fmt.Sprintf("%s/hops=%d", owner, hops), func(t *testing.T) {
@@ -1005,6 +1011,9 @@ func TestSSHForwardRealDetachedAfterUnlink(t *testing.T) {
 }
 
 func TestSSHForwardRealPondWaitsForEveryGroup(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, ending := range []string{"success", "cancel"} {
 		t.Run(ending, func(t *testing.T) {
 			f := newForwardBoundaryFixture(t, false, "ready")

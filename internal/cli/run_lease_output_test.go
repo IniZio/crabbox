@@ -74,6 +74,9 @@ func TestRunCommandRejectsLeaseOutputCollisionsBeforeAcquire(t *testing.T) {
 }
 
 func TestRunCommandLeaseOutputWithDistinctDownloads(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	for _, code := range []int{0, 23} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			dir, leaseTarget := setupLocalContainerRunSessionTest(t, "")

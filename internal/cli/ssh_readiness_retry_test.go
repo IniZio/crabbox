@@ -12,6 +12,9 @@ import (
 )
 
 func TestWaitForSSHReadyRetriesTransientFailureWithinBudget(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("shell SSH fixture")
 	}

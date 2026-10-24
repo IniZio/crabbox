@@ -17,6 +17,9 @@ import (
 )
 
 func TestWarmupCreationRejectedTiming(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	const leaseID = "cbx_0123456789ab"
 	for _, tc := range []struct {
 		name, provider, body string

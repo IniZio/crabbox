@@ -30,6 +30,9 @@ import (
 // substitution is a fake `ssh` binary injected via PATH so no network is
 // touched.
 func TestRunPondMeshForwardsGracefulCancelReturnsNoError(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if os.PathSeparator != '/' {
 		t.Skip("fake ssh shell script requires a unix-like OS")
 	}

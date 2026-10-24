@@ -203,6 +203,9 @@ func TestGitLocalReceiverRawManifestHandoffPrunesPriorFiles(t *testing.T) {
 }
 
 func TestGitLocalReceiverPruneRejectsSymlinkAncestors(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX and WSL shell pruning behavior")
 	}
@@ -306,6 +309,9 @@ func TestGitLocalReceiverRejectsInvalidRawManifestBeforePublication(t *testing.T
 }
 
 func TestGitLocalReceiverManifestSelection(t *testing.T) {
+	if runParallelCLIContract(t, 0) {
+		return
+	}
 	testGitLocalReceiverManifestSelection(t, func(t *testing.T, command string, input []byte) {
 		requireLocalReceiver(t, command, input)
 	}, remoteGitLocalSeed)
