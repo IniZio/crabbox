@@ -255,3 +255,98 @@ func TestValidateCacheVolumesForExternalProvider(t *testing.T) {
 		t.Fatalf("required volume without the capability: err=%v", err)
 	}
 }
+
+// loadedCacheVolumeConfig runs the real config loader: a trusted user config,
+// a repo crabbox.yaml in the working directory, and the env var.
+func loadedCacheVolumeConfig(t *testing.T, userYAML, repoYAML, envJSON string) core.Config {
+	t.Helper()
+	home := isolateCrabboxState(t)
+	t.Setenv("CRABBOX_CONFIG", "")
+	t.Setenv("CRABBOX_PROVIDER", providerName)
+	t.Setenv("CRABBOX_CACHE_VOLUMES", envJSON)
+	dir := filepath.Join(home, ".config", "crabbox")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "crabbox.yaml"), []byte(repoYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	cfg, err := core.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func sentCacheVolumes(t *testing.T, loaded core.Config) []desiredCacheVolume {
+	t.Helper()
+	cfg := testConfig()
+	cfg.External.Capabilities = loaded.External.Capabilities
+	cfg.Cache = loaded.Cache
+	runner, _, _ := acquireWithCacheVolumes(t, cfg, cacheVolumeReply(""))
+	if len(runner.requests) == 0 || runner.requests[0].Desired == nil {
+		t.Fatalf("requests=%#v", runner.requests)
+	}
+	return runner.requests[0].Desired.CacheVolumes
+}
+
+const (
+	cacheVolumeCapabilityYAML = "external:\n  capabilities:\n    cacheVolumes: true\n"
+	repoEvilVolumeYAML        = "cache:\n  volumes:\n    - {group: evil, name: ssh, key: evil-ssh, paths: ['~/.ssh']}\n"
+)
+
+func TestAcquireIgnoresRepoCacheVolumes(t *testing.T) {
+	if got := sentCacheVolumes(t, loadedCacheVolumeConfig(t, cacheVolumeCapabilityYAML, repoEvilVolumeYAML, "")); len(got) != 0 {
+		t.Fatalf("repo volumes reached the adapter: %#v", got)
+	}
+
+	userYAML := cacheVolumeCapabilityYAML + "cache:\n  volumes:\n    - {group: g1, name: npm, key: g1-npm, paths: ['~/.npm']}\n"
+	want := []desiredCacheVolume{{Group: "g1", Name: "npm", Key: "g1-npm", Paths: []string{"~/.npm"}}}
+	if got := sentCacheVolumes(t, loadedCacheVolumeConfig(t, userYAML, repoEvilVolumeYAML, "")); !reflect.DeepEqual(got, want) {
+		t.Fatalf("trusted config volumes with a repo list: %#v, want %#v", got, want)
+	}
+
+	envJSON := `[{"group":"g2","name":"go","key":"g2-go","paths":["~/go/pkg/mod"]}]`
+	envWant := []desiredCacheVolume{{Group: "g2", Name: "go", Key: "g2-go", Paths: []string{"~/go/pkg/mod"}}}
+	if got := sentCacheVolumes(t, loadedCacheVolumeConfig(t, cacheVolumeCapabilityYAML, repoEvilVolumeYAML, envJSON)); !reflect.DeepEqual(got, envWant) {
+		t.Fatalf("env volumes with a repo list: %#v, want %#v", got, envWant)
+	}
+}
+
+func TestAcquireForwardsSealedFromEnvJSONAndTrustedYAML(t *testing.T) {
+	want := []desiredCacheVolume{
+		{Group: "g1x", Name: "docker", Key: "g1x-docker", Paths: []string{"~/docker", "/var/lib/containerd"}, Sealed: true},
+		{Group: "g1", Name: "npm", Key: "g1-npm", Paths: []string{"~/.npm"}},
+	}
+	envJSON := `[{"group":"g1x","name":"docker","key":"g1x-docker","paths":["~/docker","/var/lib/containerd"],"sealed":true},{"group":"g1","name":"npm","key":"g1-npm","paths":["~/.npm"]}]`
+	if got := sentCacheVolumes(t, loadedCacheVolumeConfig(t, cacheVolumeCapabilityYAML, "", envJSON)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("env: %#v, want %#v", got, want)
+	}
+	userYAML := cacheVolumeCapabilityYAML + "cache:\n  volumes:\n" +
+		"    - {group: g1x, name: docker, key: g1x-docker, paths: ['~/docker', /var/lib/containerd], sealed: true}\n" +
+		"    - {group: g1, name: npm, key: g1-npm, paths: ['~/.npm']}\n"
+	if got := sentCacheVolumes(t, loadedCacheVolumeConfig(t, userYAML, "", "")); !reflect.DeepEqual(got, want) {
+		t.Fatalf("trusted yaml: %#v, want %#v", got, want)
+	}
+	sealedWire, _ := json.Marshal(want[0])
+	plainWire, _ := json.Marshal(want[1])
+	if !strings.Contains(string(sealedWire), `"sealed":true`) || strings.Contains(string(plainWire), "sealed") {
+		t.Fatalf("wire: %s / %s", sealedWire, plainWire)
+	}
+}
+
+func TestValidateCacheVolumesForExternalAcceptsContainerRoots(t *testing.T) {
+	cfg := cacheVolumeConfig(core.CacheVolumeConfig{Group: "g1x", Name: "docker", Key: "g1x-docker", Paths: []string{"~/docker", "/var/lib/containerd", "/var/lib/containers"}, Sealed: true})
+	cfg.Provider = providerName
+	if err := core.ValidateCacheVolumesForProvider(cfg); err != nil {
+		t.Fatal(err)
+	}
+}

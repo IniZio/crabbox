@@ -69,7 +69,7 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		desired.Class = strings.TrimSpace(req.Options.Class)
 	}
 	if b.cacheVolumesEnabled() {
-		desired.CacheVolumes = cacheVolumesForProtocol(b.cfg.Cache.Volumes)
+		desired.CacheVolumes = cacheVolumesForProtocol(b.cfg.CacheVolumesForProvider(providerName))
 	}
 	response, err := b.invoke(ctx, protocolRequest{
 		Operation: "acquire",

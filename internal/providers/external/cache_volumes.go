@@ -24,6 +24,7 @@ func cacheVolumesForProtocol(volumes []core.CacheVolumeConfig) []desiredCacheVol
 			Paths:    append([]string(nil), volume.EffectivePaths()...),
 			SizeGB:   volume.SizeGB,
 			Required: volume.Required,
+			Sealed:   volume.Sealed,
 		})
 	}
 	return desired

@@ -94,13 +94,18 @@ configured; see [External provider](../providers/external.md#protocol). The
 adapter owns storage. Crabbox sends the volumes on `acquire`, prints the
 adapter's per-volume outcome as `cache volume NAME: OUTCOME (detail)` on stderr,
 and rolls the lease back when a `required` volume is `skipped`. Volumes for this
-provider differ from the others in three ways:
+provider differ from the others in four ways:
 
 - `path` may start with `~/`, which means the lease's login home, and `paths`
   lists several directories for one named volume.
 - `group` names the adapter store that holds the volume. Volumes of one group
   share one store, and each `name` is a directory inside it.
 - `key` and `group` must match `[A-Za-z0-9._-]{1,96}`.
+- `sealed: true` tells the adapter to publish the volume's group only when the
+  volume carries the seal marker its owner wrote at close.
+- Only trusted user config, `CRABBOX_CACHE_VOLUMES` and flags supply them.
+  `cache.volumes` in a repository config is ignored, because the adapter
+  mounts these paths on the lease.
 
 ```yaml
 cache:
