@@ -31,6 +31,7 @@ func TestCoordinatorStopAggregateGuestCleanupPreservesReleaseBudget(t *testing.T
 
 func testCoordinatorStopAggregateGuestCleanup(t *testing.T, stalled bool) {
 	clearConfigEnv(t)
+	useProductActionsHydrationStopGrace(t)
 	dir := t.TempDir()
 	logPath := installRecordingSSH(t, dir)
 	sshPath := filepath.Join(dir, "ssh")
@@ -110,6 +111,7 @@ if [ -n "${CRABBOX_FAKE_SSH_STDIN_LOG:-}" ]; then`, 1))
 
 func TestHydrationStopGraceHonorsCallerCancellation(t *testing.T) {
 	clearConfigEnv(t)
+	useProductActionsHydrationStopGrace(t)
 	dir := t.TempDir()
 	logPath := installRecordingSSH(t, dir)
 	sshPath := filepath.Join(dir, "ssh")

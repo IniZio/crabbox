@@ -72,6 +72,15 @@ func runCLITests(m *testing.M) (code int) {
 	return testutil.RunWithIsolatedUserDirs(m)
 }
 
+// runCLITests shortens the hydration stop grace for the whole package; a test
+// that asserts the grace itself must run against the product value.
+func useProductActionsHydrationStopGrace(t *testing.T) {
+	t.Helper()
+	previous := actionsHydrationStopSettleDelay
+	actionsHydrationStopSettleDelay = actionsHydrationStopGrace
+	t.Cleanup(func() { actionsHydrationStopSettleDelay = previous })
+}
+
 const testTCPRelayArg = "__crabbox-test-tcp-relay"
 
 // relayTestTCP lets the test binary serve as an SSH ProxyCommand.
