@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Azure Sandbox: include client request and lifecycle-poll durations and counts in warmup timing reports, including failed attempts, without inferring server disk or boot timings. [PR 2959](https://github.com/openclaw/crabbox/pull/2959).
+
 ### Fixed
 
 - Parallels: an explicitly configured macOS guest user (including `crabbox`, or a generic `ssh.user` / `CRABBOX_SSH_USER`) is honored instead of being replaced by the host `USER`; the host-user fallback still applies when no guest user is configured. [PR 2958](https://github.com/openclaw/crabbox/pull/2958). Thanks @rustanacexd.
