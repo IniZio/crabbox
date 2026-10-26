@@ -106,6 +106,10 @@ func (Provider) RouteConfig(cfg *core.Config, _ *flag.FlagSet, _ any) error {
 	return nil
 }
 
+func (Provider) ClaimScope(cfg core.Config) string {
+	return externalClaimScope(cfg)
+}
+
 func (Provider) ControllerProviderScope(cfg core.Config) (string, error) {
 	return externalControllerScope(cfg)
 }
