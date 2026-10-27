@@ -11,6 +11,8 @@
 
 ### Fixed
 
+- Local Git seeding: stream large object enumerations without the 16 MiB control-output ceiling and preserve the original limit or output failure. [PR 2841](https://github.com/openclaw/crabbox/pull/2841). Thanks @vincentkoc.
+
 - Coordinator: preserve retryable responses for transient Cloudflare storage failures without replaying operations, and prepare compatible readers for the staged internal grant-header migration. [PR 2847](https://github.com/openclaw/crabbox/pull/2847). Thanks @vincentkoc.
 - CI: shorten only the detached Git-seed fixture's hydration waits and balance slow seed and WSL settings tests across shards, preserving production delays and coverage. [PR 2969](https://github.com/openclaw/crabbox/pull/2969).
 - Blacksmith: reserve a separate bounded final verification phase after native stop consumes its reconciliation budget, without replaying the command or releasing unresolved claim/key custody. [PR 2967](https://github.com/openclaw/crabbox/pull/2967). Thanks @vincentkoc.
