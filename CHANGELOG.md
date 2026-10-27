@@ -11,6 +11,8 @@
 
 ### Added
 
+- Static SSH: add `static.noControlMaster`, `CRABBOX_STATIC_NO_CONTROL_MASTER`, and `--static-no-control-master` to opt out of SSH multiplexing, preserving explicit overrides in recovery commands. [PR 2855](https://github.com/openclaw/crabbox/pull/2855). Thanks @shunkakinoki.
+- Managed SSH hosts: enroll exclusive operator-owned capacity behind outbound, pinned SSH relays; isolate borrower accounts, rotate portable-pool access, and require cleanup receipts before reuse. Windows MXC remains experimental pending hardware qualification. [PR 2964](https://github.com/openclaw/crabbox/pull/2964). Thanks @RomneyDa.
 - Managed SSH hosts: enroll exclusive operator-owned capacity behind outbound, pinned SSH relays; isolate borrower accounts, rotate portable-pool access, and require cleanup receipts before reuse. Windows MXC remains experimental, with native ARM64 lifecycle qualification documented. [PR 2964](https://github.com/openclaw/crabbox/pull/2964). Thanks @RomneyDa.
 
 - Sync: print `still seeding remote Git metadata after ...` progress lines while a remote Git seed runs, so long seeds of large repositories no longer look stalled. [PR 2974](https://github.com/openclaw/crabbox/pull/2974).
