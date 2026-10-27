@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Coordinator: preserve retryable responses for transient Cloudflare storage failures without replaying operations, and prepare compatible readers for the staged internal grant-header migration. [PR 2847](https://github.com/openclaw/crabbox/pull/2847). Thanks @vincentkoc.
 - CI: shorten only the detached Git-seed fixture's hydration waits and balance slow seed and WSL settings tests across shards, preserving production delays and coverage. [PR 2969](https://github.com/openclaw/crabbox/pull/2969).
 - Blacksmith: reserve a separate bounded final verification phase after native stop consumes its reconciliation budget, without replaying the command or releasing unresolved claim/key custody. [PR 2967](https://github.com/openclaw/crabbox/pull/2967). Thanks @vincentkoc.
 - Blacksmith Testbox: clarify cleanup-only recovery with the exact stop command and observed run exit, preserving failed-run status and retained ownership without suggesting command replay. [PR #2966](https://github.com/openclaw/crabbox/pull/2966). Thanks @vincentkoc.
