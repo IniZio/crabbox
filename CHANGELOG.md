@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Remote Git seeding: report interrupted seeds as `exit=cancelled`, `exit=deadline`, or `exit=signal:<name>` instead of `exit=unknown`. [PR 2973](https://github.com/openclaw/crabbox/pull/2973).
+
 ## 0.80.0 - 2026-10-27
 
 ### Highlights
