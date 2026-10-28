@@ -23,6 +23,10 @@
 - Azure Sandbox: include client request and lifecycle-poll durations and counts in warmup timing reports, including failed attempts, without inferring server disk or boot timings. [PR 2959](https://github.com/openclaw/crabbox/pull/2959).
 - Azure Sandbox: retain session-owned disks through explicit pause/resume with finite per-activation work admission, durable exact-ownership recovery, and explicit deletion. [PR 2960](https://github.com/openclaw/crabbox/pull/2960).
 
+### Added
+
+- Shard: cap simultaneous provisioning and execution with `--concurrency` or `shard.maxConcurrency`, preserving all-shards-at-once defaults and cancellation cleanup. [PR 2935](https://github.com/openclaw/crabbox/pull/2935). Thanks @zozo123.
+
 ### Fixed
 
 - SSH static provider: when another repository holds a static lease, the refusal now explains that a distinct `static.id` / `CRABBOX_STATIC_ID` shares the host safely, and warns that `--reclaim` takes over the other repository's lease and workdir. [PR 2972](https://github.com/openclaw/crabbox/pull/2972).

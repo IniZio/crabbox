@@ -11074,6 +11074,7 @@ results:
     - junit.xml
 shard:
   maxCount: 12
+  maxConcurrency: 4
 run:
   preflightTools:
     - node
@@ -11248,7 +11249,7 @@ ssh:
 	if len(cfg.Results.JUnit) != 1 || cfg.Results.JUnit[0] != "junit.xml" || !cfg.Results.Auto || !cfg.Results.FailOnFailures {
 		t.Fatalf("results config not loaded: %#v", cfg.Results)
 	}
-	if cfg.Shard.MaxCount != 12 {
+	if cfg.Shard.MaxCount != 12 || cfg.Shard.MaxConcurrency != 4 {
 		t.Fatalf("shard config not loaded: %#v", cfg.Shard)
 	}
 	if len(cfg.Run.PreflightTools) != 2 || cfg.Run.PreflightTools[0] != "node" || cfg.Run.PreflightTools[1] != "bun" {
@@ -17476,6 +17477,8 @@ func TestConfigInputGenericFileGroups(t *testing.T) {
 		{"results-clear", "results: {junit: []}", true, false},
 		{"results-false", "results: {auto: false}", true, false},
 		{"shard-zero", "shard: {maxCount: 0}", true, false},
+		{"shard-concurrency-zero", "shard: {maxConcurrency: 0}", true, false},
+		{"shard-concurrency", "shard: {maxConcurrency: 4}", true, false},
 		{"cache-false", "cache: {pnpm: false}", true, false},
 		{"cache-clear", "cache: {volumes: []}", true, false},
 		{"cache-invalid", "cache: {volumes: [{key: fixture}]}", false, true},
