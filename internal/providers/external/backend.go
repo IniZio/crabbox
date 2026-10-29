@@ -139,7 +139,7 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 		return core.LeaseTarget{}, err
 	}
-	if _, err := core.PersistValidatedExternalRouting(lease.LeaseID, b.cfg.External); err != nil {
+	if _, err := core.PersistValidatedExternalLeaseRouting(routedLease(lease, slug), b.cfg.External); err != nil {
 		var acquireErr error = core.Exit(2, "%v", err)
 		if !retainReservationOnFailure {
 			acquireErr = appendAcquireCleanupError(acquireErr, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
@@ -296,6 +296,19 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		}
 		keep = keepFromLabels(claim.Labels, true)
 	}
+	if desired == nil && expected == nil {
+		routed, ok, err := b.resolveRoutedLease(req.ID)
+		if err != nil {
+			return core.LeaseTarget{}, err
+		}
+		if ok {
+			id = routed.Name
+			desired = &desiredLease{LeaseID: routed.LeaseID, Slug: routed.Slug, Name: routed.Name}
+			if lifecycleConfigured(b.cfg.External) {
+				claimedLease = &protocolLease{LeaseID: routed.LeaseID, Slug: routed.Slug, Name: routed.Name}
+			}
+		}
+	}
 	if desired == nil && expected != nil {
 		leaseID := core.Blank(expected.LeaseID, expected.AttemptLeaseID)
 		desired = &desiredLease{
@@ -371,7 +384,7 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		return core.LeaseTarget{}, core.Exit(4, "external provider lease %s is %s; resume or stop it (crabbox stop --id %s)", lease.LeaseID, lease.Server.Status, lease.LeaseID)
 	}
 	if !req.NoLocalStateMutations {
-		if _, err := core.PersistValidatedExternalRouting(lease.LeaseID, b.cfg.External); err != nil {
+		if _, err := core.PersistValidatedExternalLeaseRouting(routedLease(lease, ""), b.cfg.External); err != nil {
 			return core.LeaseTarget{}, core.Exit(2, "%v", err)
 		}
 	}
@@ -1285,6 +1298,50 @@ func (b *leaseBackend) resolveClaim(identifier string) (core.LeaseClaim, bool, e
 		return match, true, nil
 	}
 	return core.LeaseClaim{}, false, nil
+}
+
+func routedLease(lease core.LeaseTarget, fallbackSlug string) core.ExternalRoutedLease {
+	return core.ExternalRoutedLease{
+		LeaseID: lease.LeaseID,
+		Slug:    leaseSlugForClaim(lease, fallbackSlug),
+		Name:    lease.Server.Name,
+	}
+}
+
+func (b *leaseBackend) resolveRoutedLease(identifier string) (core.ExternalRoutedLease, bool, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return core.ExternalRoutedLease{}, false, nil
+	}
+	routings, err := core.ListExternalRoutings()
+	if err != nil {
+		return core.ExternalRoutedLease{}, false, err
+	}
+	scope := b.claimScope()
+	var match core.ExternalRoutedLease
+	for _, routing := range routings {
+		lease, ok := core.ExternalRoutingLease(routing)
+		if !ok || !routedLeaseMatches(lease, identifier) {
+			continue
+		}
+		routedCfg := b.cfg
+		routedCfg.External = routing
+		if externalClaimScope(routedCfg) != scope {
+			continue
+		}
+		if match.LeaseID != "" && match.LeaseID != lease.LeaseID {
+			return core.ExternalRoutedLease{}, false, core.Exit(4, "external provider routing for %q is ambiguous in this lifecycle scope", identifier)
+		}
+		match = lease
+	}
+	return match, match.LeaseID != "", nil
+}
+
+func routedLeaseMatches(lease core.ExternalRoutedLease, identifier string) bool {
+	if identifier == lease.LeaseID || identifier == lease.Name {
+		return true
+	}
+	return lease.Slug != "" && core.NormalizeLeaseSlug(identifier) == lease.Slug
 }
 
 func (b *leaseBackend) claimMatchesScopeOrRouting(claim core.LeaseClaim, scope string) bool {
