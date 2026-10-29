@@ -32,6 +32,16 @@ type externalRoutingState struct {
 	Architecture              string                     `json:"architecture,omitempty"`
 	CredentialBoundaryVersion int                        `json:"credentialBoundaryVersion,omitempty"`
 	Generation                string                     `json:"generation,omitempty"`
+	Lease                     *ExternalRoutedLease       `json:"lease,omitempty"`
+}
+
+// ExternalRoutedLease is the provider lease a routing record was written for.
+// The record exists before the claim, so this is the only local identity of a
+// lease whose acquisition stopped between provider creation and the claim.
+type ExternalRoutedLease struct {
+	LeaseID string `json:"leaseId"`
+	Slug    string `json:"slug,omitempty"`
+	Name    string `json:"name"`
 }
 
 const externalRoutingCredentialVersion = 2
@@ -51,6 +61,7 @@ func externalRoutingStateForConfig(cfg ExternalConfig, credentialVersion int) ex
 		Architecture:              cfg.routingArchitecture,
 		CredentialBoundaryVersion: credentialVersion,
 		Generation:                cfg.routingGeneration,
+		Lease:                     cfg.routingLease,
 	}
 }
 
@@ -130,6 +141,46 @@ func PersistExternalRouting(leaseID string, cfg ExternalConfig) (string, error) 
 // validated before the routing state became authoritative for a lease.
 func PersistValidatedExternalRouting(leaseID string, cfg ExternalConfig) (string, error) {
 	return persistExternalRouting(leaseID, cfg, externalRoutingCredentialVersion)
+}
+
+func PersistValidatedExternalLeaseRouting(lease ExternalRoutedLease, cfg ExternalConfig) (string, error) {
+	cfg.routingLease = &lease
+	return persistExternalRouting(lease.LeaseID, cfg, externalRoutingCredentialVersion)
+}
+
+func ExternalRoutingLease(cfg ExternalConfig) (ExternalRoutedLease, bool) {
+	if cfg.routingLease == nil || strings.TrimSpace(cfg.routingLease.LeaseID) == "" {
+		return ExternalRoutedLease{}, false
+	}
+	return *cfg.routingLease, true
+}
+
+// ListExternalRoutings loads every readable routing record. Unreadable records
+// are skipped: they cannot route a command either way.
+func ListExternalRoutings() ([]ExternalConfig, error) {
+	dir, err := externalRoutingConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	dir = filepath.Join(dir, "crabbox", "external")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list external routing: %w", err)
+	}
+	var routings []ExternalConfig
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || strings.HasPrefix(name, ".") || filepath.Ext(name) != ".json" {
+			continue
+		}
+		if routing, err := LoadExternalRouting(filepath.Join(dir, name)); err == nil {
+			routings = append(routings, routing)
+		}
+	}
+	return routings, nil
 }
 
 func persistExternalRouting(leaseID string, cfg ExternalConfig, credentialVersion int) (string, error) {
@@ -298,6 +349,7 @@ func loadExternalRouting(path, expectedDigest string) (ExternalConfig, error) {
 		routingCredentialVersion: state.CredentialBoundaryVersion,
 		routingDigest:            digest,
 		routingGeneration:        state.Generation,
+		routingLease:             state.Lease,
 	}
 	SetExternalRoutingTarget(&result, state.TargetOS, state.WindowsMode)
 	SetExternalRoutingArchitecture(&result, state.Architecture)
@@ -341,6 +393,7 @@ func RemoveExternalRoutingIfUnchanged(leaseID string, expected ExternalConfig) e
 func externalRoutingStateForCASComparison(cfg ExternalConfig) externalRoutingState {
 	state := externalRoutingStateForConfig(cfg, 0)
 	state.Generation = ""
+	state.Lease = nil
 	return state
 }
 

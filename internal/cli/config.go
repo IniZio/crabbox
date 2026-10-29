@@ -352,6 +352,7 @@ type ExternalConfig struct {
 	routingTargetOS          string
 	routingWindowsMode       string
 	routingArchitecture      string
+	routingLease             *ExternalRoutedLease
 }
 
 type ExternalCapabilitiesConfig struct {
