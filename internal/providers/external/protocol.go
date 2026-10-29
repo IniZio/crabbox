@@ -208,6 +208,9 @@ func (p protocolLease) target(cfg core.Config, keep bool) core.LeaseTarget {
 		target.User = p.SSH.User
 		target.Host = p.SSH.Host
 		target.Key = p.SSH.Key
+		if target.Key == "" && core.IsSSHKeyExplicit(&cfg) {
+			target.Key = cfg.SSHKey
+		}
 		target.Port = core.Blank(p.SSH.Port, "22")
 		target.FallbackPorts = p.SSH.FallbackPorts
 		target.ReadyCheck = core.Blank(p.SSH.ReadyCheck, externalDefaultReadyCheckForTarget(cfg.TargetOS, cfg.WindowsMode))
