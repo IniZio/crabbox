@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type sshReadinessProbeStopped struct {
@@ -50,13 +54,17 @@ var sshHostKeyVerificationPrefixes = func() [len(sshHostKeyVerificationDiagnosti
 	return prefixes
 }()
 
-// Retain only matching state, never stderr bytes. Matching survives arbitrary
-// write boundaries and output volume without weakening bounded-buffer semantics.
+// Retain matching state and one bounded line, never the stream. Matching
+// survives arbitrary write boundaries and output volume.
 type sshReadinessDiagnostic struct {
 	mu       sync.Mutex
 	matched  int
 	rejected bool
+	line     []byte
+	lastLine string
 }
+
+const sshDiagnosticLineBytes = 1024
 
 func (d *sshReadinessDiagnostic) Write(data []byte) (int, error) {
 	d.mu.Lock()
@@ -75,7 +83,80 @@ func (d *sshReadinessDiagnostic) Write(data []byte) (int, error) {
 			}
 		}
 	}
+	for _, b := range data {
+		if b == '\n' || b == '\r' {
+			if line := sanitizeSSHDiagnosticLine(d.line); line != "" {
+				d.lastLine = line
+			}
+			d.line = d.line[:0]
+		} else if len(d.line) < sshDiagnosticLineBytes {
+			d.line = append(d.line, b)
+		}
+	}
 	return len(data), nil
+}
+
+func (d *sshReadinessDiagnostic) last() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if line := sanitizeSSHDiagnosticLine(d.line); line != "" {
+		return line
+	}
+	return d.lastLine
+}
+
+const sshDiagnosticLineRunes = 200
+
+func sanitizeSSHDiagnosticLine(raw []byte) string {
+	line := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, string(raw)))
+	if runes := []rune(line); len(runes) > sshDiagnosticLineRunes {
+		line = string(runes[:sshDiagnosticLineRunes])
+	}
+	return line
+}
+
+// sshProbeFailure keeps the probe's message unchanged for every caller and
+// carries why the attempt failed for the readiness wait to report.
+type sshProbeFailure struct {
+	err   error
+	cause string
+}
+
+func (e *sshProbeFailure) Error() string { return e.err.Error() }
+func (e *sshProbeFailure) Unwrap() error { return e.err }
+
+func sshProbeCause(err error) string {
+	var failure *sshProbeFailure
+	if errors.As(err, &failure) {
+		return failure.cause
+	}
+	return ""
+}
+
+// Exit 255 is ssh's own failure, so its last stderr line is its diagnostic.
+// Any other exit status came from the remote check, whose output stays private.
+func newSSHProbeFailure(ctx context.Context, err error, diagnostic *sshReadinessDiagnostic) error {
+	var exitErr *exec.ExitError
+	if err == nil || ctx.Err() != nil || !errors.As(err, &exitErr) {
+		return err
+	}
+	code := exitCode(err)
+	if code < 0 {
+		return err
+	}
+	if code != 255 {
+		return &sshProbeFailure{err: err, cause: fmt.Sprintf("ready check exited %d", code)}
+	}
+	cause := diagnostic.last()
+	if cause == "" {
+		cause = "ssh exited 255"
+	}
+	return &sshProbeFailure{err: err, cause: cause}
 }
 
 func (d *sshReadinessDiagnostic) hostKeyRejected() bool {
@@ -94,7 +175,7 @@ func runSSHReadinessProbe(ctx context.Context, target SSHTarget, remote, connect
 	if err == nil {
 		recordCreationObservation(ctx, "ssh_authenticated")
 	}
-	return sshReadinessProbeError(ctx, err, diagnostic.hostKeyRejected())
+	return newSSHProbeFailure(ctx, sshReadinessProbeError(ctx, err, diagnostic.hostKeyRejected()), &diagnostic)
 }
 
 func canWaitForLinuxReadiness(target SSHTarget) bool {

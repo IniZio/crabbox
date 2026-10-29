@@ -374,6 +374,21 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 	// failure from being reported as an unknown-authentication timeout.
 	authenticated := false
 	retryDelay := 250 * time.Millisecond
+	// lastCause is the latest ssh attempt's failure; printedCause is what the
+	// last progress line showed, so a repeated cause is not printed again.
+	lastCause, printedCause := "", ""
+	noteCause := func(err error) {
+		if cause := sshProbeCause(err); cause != "" {
+			lastCause = cause
+		}
+	}
+	progress := func(message string) {
+		if lastCause != "" && lastCause != printedCause {
+			message += " last=" + lastCause
+			printedCause = lastCause
+		}
+		fmt.Fprintln(stderr, message)
+	}
 	check := func(probeErr error) error {
 		if stopped := sshReadinessProbeContextError(ctx, lastProbe); stopped != nil {
 			return stopped.cause
@@ -391,7 +406,11 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 			if authenticated {
 				authentication = "ok"
 			}
-			return Exit(5, "timed out waiting for SSH on %s during %s probe=%s cause=deadline_exceeded authentication=%s%s; %s", target.Host, phase, lastProbe, authentication, ports, sshWaitNextAction(phase))
+			reason := ""
+			if lastCause != "" {
+				reason = ": " + lastCause + ";"
+			}
+			return Exit(5, "timed out waiting for SSH on %s during %s%s probe=%s cause=deadline_exceeded authentication=%s%s; %s", target.Host, phase, reason, lastProbe, authentication, ports, sshWaitNextAction(phase))
 		}
 		return nil
 	}
@@ -419,6 +438,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 		} else if target.SSHConfigProxy {
 			lastProbe = "readiness"
 			err := probeProxySSHReady(probeCtx, target, profile)
+			noteCause(err)
 			if stopped := check(err); stopped != nil {
 				return stopped
 			}
@@ -439,6 +459,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 				return err
 			}
 			if transportErr := runSSHReadinessProbe(probeCtx, *target, sshTransportProbeCommand(*target), profile.connectTimeout, profile.connectionAttempts); transportErr != nil {
+				noteCause(transportErr)
 				if stopped := check(transportErr); stopped != nil {
 					return stopped
 				}
@@ -450,7 +471,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 				lastProbe = "readiness"
 				lastPorts = "proxy:ready"
 			}
-			fmt.Fprintln(stderr, sshWaitProgressMessage(target, phase, target.Port, "", lastPorts, time.Since(start), time.Until(deadline)))
+			progress(sshWaitProgressMessage(target, phase, target.Port, "", lastPorts, time.Since(start), time.Until(deadline)))
 		} else {
 			reachablePort := ""
 			transportPort := ""
@@ -484,6 +505,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 					return err
 				}
 				err = runSSHReadinessProbe(probeCtx, probe, sshReadyCommand(probe), profile.connectTimeout, profile.connectionAttempts)
+				noteCause(err)
 				if stopped := check(err); stopped != nil {
 					return stopped
 				}
@@ -502,6 +524,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 					return err
 				}
 				if err := runSSHReadinessProbe(probeCtx, probe, sshTransportProbeCommand(probe), profile.connectTimeout, profile.connectionAttempts); err != nil {
+					noteCause(err)
 					if stopped := check(err); stopped != nil {
 						return stopped
 					}
@@ -523,8 +546,9 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 				if canWaitForLinuxReadiness(probe) {
 					lastPorts = strings.Join(probes, ",")
 					err := waitForLinuxReadiness(probeCtx, probe, profile, 30*time.Second, func() {
-						fmt.Fprintln(stderr, sshWaitProgressMessage(target, phase, reachablePort, transportPort, lastPorts, time.Since(start), time.Until(deadline)))
+						progress(sshWaitProgressMessage(target, phase, reachablePort, transportPort, lastPorts, time.Since(start), time.Until(deadline)))
 					})
+					noteCause(err)
 					if stopped := check(err); stopped != nil {
 						return stopped
 					}
@@ -549,7 +573,7 @@ func waitForSSHReadyWithProbeContext(ctx, probeCtx context.Context, target *SSHT
 			if transportPort != "" {
 				lastProbe = "readiness"
 			}
-			fmt.Fprintln(stderr, sshWaitProgressMessage(target, phase, reachablePort, transportPort, lastPorts, time.Since(start), time.Until(deadline)))
+			progress(sshWaitProgressMessage(target, phase, reachablePort, transportPort, lastPorts, time.Since(start), time.Until(deadline)))
 		}
 		if err := check(nil); err != nil {
 			return err
