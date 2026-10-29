@@ -673,10 +673,12 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		failure, _ := err.(*procjson.Failure)
 		if failure != nil && failure.Stage == procjson.StageRun {
 			message := strings.TrimSpace(core.Blank(strings.TrimSpace(result.Stderr), result.Stdout))
+			reason := message
 			var failed protocolResponse
 			if json.Unmarshal([]byte(result.Stdout), &failed) == nil {
 				if providerMessage := strings.TrimSpace(failed.Error); providerMessage != "" {
 					message = providerMessage
+					reason = providerMessage
 					if tail := stderrTail(result.Stderr); tail != "" {
 						message += ": " + tail
 					}
@@ -685,6 +687,9 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 			code := result.ExitCode
 			if code == 0 {
 				code = 5
+			}
+			if providerReportedNotFound(request.Operation, reason) {
+				code = 4
 			}
 			return protocolResponse{}, core.Exit(code, "external provider command failed: %v: %s", failure.Err, message)
 		}
@@ -699,7 +704,11 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 				message += ": " + tail
 			}
 		}
-		return protocolResponse{}, core.Exit(5, "external provider: %s", message)
+		code := 5
+		if providerReportedNotFound(request.Operation, response.Error) {
+			code = 4
+		}
+		return protocolResponse{}, core.Exit(code, "external provider: %s", message)
 	}
 	if response.ProtocolVersion != protocolVersion {
 		return protocolResponse{}, core.Exit(5, "external provider protocol version %d is unsupported", response.ProtocolVersion)
@@ -718,6 +727,15 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		}
 	}
 	return response, nil
+}
+
+// Stop callers treat exit 4 as "already gone", so only the lookups a stop
+// makes map the protocol's "... not found" reply onto it.
+func providerReportedNotFound(operation, reason string) bool {
+	if operation != "resolve" && operation != "release" {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(reason)), "not found")
 }
 
 func externalAdapterEnv(cfg core.Config, env []string) []string {
