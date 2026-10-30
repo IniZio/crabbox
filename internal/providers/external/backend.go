@@ -299,12 +299,14 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		}
 		keep = keepFromLabels(claim.Labels, true)
 	}
+	var routing *core.ExternalConfig
 	if desired == nil && expected == nil {
-		routed, ok, err := b.resolveRoutedLease(req.ID)
+		routed, routedCfg, ok, err := b.resolveRoutedLease(req.ID)
 		if err != nil {
 			return core.LeaseTarget{}, err
 		}
 		if ok {
+			routing = &routedCfg
 			id = routed.Name
 			desired = &desiredLease{LeaseID: routed.LeaseID, Slug: routed.Slug, Name: routed.Name}
 			if lifecycleConfigured(b.cfg.External) {
@@ -339,6 +341,13 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		Repo:        repoForProtocol(req.Repo),
 	})
 	if err != nil {
+		// With no claim, the routing is all that keeps the slug taken, and the
+		// provider has just said it holds nothing under that lease.
+		if routing != nil && req.ReleaseOnly && errors.As(err, new(providerNotFoundError)) {
+			if cleanupErr := core.RemoveExternalRoutingIfUnchanged(desired.LeaseID, *routing); cleanupErr != nil {
+				return core.LeaseTarget{}, fmt.Errorf("%w; remove routing of absent lease: %v", err, cleanupErr)
+			}
+		}
 		return core.LeaseTarget{}, err
 	}
 	if response.Lease == nil {
@@ -687,12 +696,12 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 					}
 				}
 			}
+			if providerReportedNotFound(request.Operation, reason) {
+				return protocolResponse{}, providerNotFoundError{core.Exit(4, "external provider command failed: %v: %s", failure.Err, message)}
+			}
 			code := result.ExitCode
 			if code == 0 {
 				code = 5
-			}
-			if providerReportedNotFound(request.Operation, reason) {
-				code = 4
 			}
 			return protocolResponse{}, core.Exit(code, "external provider command failed: %v: %s", failure.Err, message)
 		}
@@ -707,11 +716,10 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 				message += ": " + tail
 			}
 		}
-		code := 5
 		if providerReportedNotFound(request.Operation, response.Error) {
-			code = 4
+			return protocolResponse{}, providerNotFoundError{core.Exit(4, "external provider: %s", message)}
 		}
-		return protocolResponse{}, core.Exit(code, "external provider: %s", message)
+		return protocolResponse{}, core.Exit(5, "external provider: %s", message)
 	}
 	if response.ProtocolVersion != protocolVersion {
 		return protocolResponse{}, core.Exit(5, "external provider protocol version %d is unsupported", response.ProtocolVersion)
@@ -730,6 +738,16 @@ func (b *leaseBackend) invokeProtocol(ctx context.Context, request protocolReque
 		}
 	}
 	return response, nil
+}
+
+type providerNotFoundError struct{ core.ExitError }
+
+func (e providerNotFoundError) As(target any) bool {
+	exit, ok := target.(*core.ExitError)
+	if ok {
+		*exit = e.ExitError
+	}
+	return ok
 }
 
 // Stop callers treat exit 4 as "already gone", so only the lookups a stop
@@ -1283,7 +1301,39 @@ func (b *leaseBackend) claimSlugInUse(slug, leaseID string) (bool, error) {
 			return true, nil
 		}
 	}
+	// A routing with no claim is a lease whose acquire never finished; its VM
+	// may still exist under this slug.
+	routings, err := b.scopedRoutings()
+	if err != nil {
+		return false, err
+	}
+	for _, routing := range routings {
+		lease, _ := core.ExternalRoutingLease(routing)
+		if lease.LeaseID != leaseID && core.NormalizeLeaseSlug(lease.Slug) == slug {
+			return true, nil
+		}
+	}
 	return false, nil
+}
+
+func (b *leaseBackend) scopedRoutings() ([]core.ExternalConfig, error) {
+	routings, err := core.ListExternalRoutings()
+	if err != nil {
+		return nil, err
+	}
+	scope := b.claimScope()
+	var scoped []core.ExternalConfig
+	for _, routing := range routings {
+		if _, ok := core.ExternalRoutingLease(routing); !ok {
+			continue
+		}
+		routedCfg := b.cfg
+		routedCfg.External = routing
+		if externalClaimScope(routedCfg) == scope {
+			scoped = append(scoped, routing)
+		}
+	}
+	return scoped, nil
 }
 
 func (b *leaseBackend) resolveClaim(identifier string) (core.LeaseClaim, bool, error) {
@@ -1310,7 +1360,7 @@ func (b *leaseBackend) resolveClaim(identifier string) (core.LeaseClaim, bool, e
 		}
 		if core.LeaseClaimMatchesIdentifier(claim, identifier) {
 			if match.LeaseID != "" && match.LeaseID != claim.LeaseID {
-				return core.LeaseClaim{}, false, core.Exit(4, "external provider claim %q is ambiguous in this lifecycle scope", identifier)
+				return core.LeaseClaim{}, false, core.Exit(5, "external provider claim %q is ambiguous in this lifecycle scope", identifier)
 			}
 			match = claim
 		}
@@ -1329,33 +1379,28 @@ func routedLease(lease core.LeaseTarget, fallbackSlug string) core.ExternalRoute
 	}
 }
 
-func (b *leaseBackend) resolveRoutedLease(identifier string) (core.ExternalRoutedLease, bool, error) {
+func (b *leaseBackend) resolveRoutedLease(identifier string) (core.ExternalRoutedLease, core.ExternalConfig, bool, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
-		return core.ExternalRoutedLease{}, false, nil
+		return core.ExternalRoutedLease{}, core.ExternalConfig{}, false, nil
 	}
-	routings, err := core.ListExternalRoutings()
+	routings, err := b.scopedRoutings()
 	if err != nil {
-		return core.ExternalRoutedLease{}, false, err
+		return core.ExternalRoutedLease{}, core.ExternalConfig{}, false, err
 	}
-	scope := b.claimScope()
 	var match core.ExternalRoutedLease
+	var matchCfg core.ExternalConfig
 	for _, routing := range routings {
-		lease, ok := core.ExternalRoutingLease(routing)
-		if !ok || !routedLeaseMatches(lease, identifier) {
-			continue
-		}
-		routedCfg := b.cfg
-		routedCfg.External = routing
-		if externalClaimScope(routedCfg) != scope {
+		lease, _ := core.ExternalRoutingLease(routing)
+		if !routedLeaseMatches(lease, identifier) {
 			continue
 		}
 		if match.LeaseID != "" && match.LeaseID != lease.LeaseID {
-			return core.ExternalRoutedLease{}, false, core.Exit(4, "external provider routing for %q is ambiguous in this lifecycle scope", identifier)
+			return core.ExternalRoutedLease{}, core.ExternalConfig{}, false, core.Exit(5, "external provider routing for %q is ambiguous in this lifecycle scope", identifier)
 		}
-		match = lease
+		match, matchCfg = lease, routing
 	}
-	return match, match.LeaseID != "", nil
+	return match, matchCfg, match.LeaseID != "", nil
 }
 
 func routedLeaseMatches(lease core.ExternalRoutedLease, identifier string) bool {
