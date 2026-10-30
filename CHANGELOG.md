@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Hyper-V: save and resume native Windows guests with exact-claim fencing, standard lifecycle JSON receipts, a shared Node/npm warm baseline, and bounded provisioning and host operations. [PR 2975](https://github.com/openclaw/crabbox/pull/2975). Thanks @paulcam206.
+
 ### Fixed
 
 - Parallels: wait for DHCP instead of probing SSH on a self-assigned link-local address, preserving the startup deadline and fresh-clone retry with an address-specific diagnostic. [PR 2981](https://github.com/openclaw/crabbox/pull/2981). Thanks @rustanacexd.
