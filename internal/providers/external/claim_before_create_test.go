@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	core "github.com/openclaw/crabbox/internal/cli"
@@ -111,5 +112,68 @@ func TestAcquireKeepsRoutingWhenRollbackFails(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("routing of a VM the rollback could not release is gone: %v", err)
+	}
+}
+
+func leaveRouting(t *testing.T, leaseID, slug string) {
+	t.Helper()
+	lease := core.ExternalRoutedLease{LeaseID: leaseID, Slug: slug, Name: core.LeaseProviderName(leaseID, slug)}
+	if _, err := core.PersistValidatedExternalLeaseRouting(lease, testConfig().External); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStopWithTwoRoutingsForOneSlugExitsFive(t *testing.T) {
+	isolateCrabboxState(t)
+	leaveRouting(t, "cbx_00000000000a", "moor-7")
+	leaveRouting(t, "cbx_00000000000b", "moor-7")
+	err := stopLease(&fakeCloud{vms: map[string]string{}}, "moor-7")
+	if code := core.ExitCodeForError(err, -1); code != 5 || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("exit=%d err=%v, want exit 5 naming the ambiguity", code, err)
+	}
+}
+
+func TestAcquireSkipsSlugWithLeftoverRouting(t *testing.T) {
+	isolateCrabboxState(t)
+	leaveRouting(t, "cbx_00000000000a", "moor-7")
+	cloud := &fakeCloud{vms: map[string]string{}}
+	backend := &leaseBackend{cfg: testConfig(), rt: core.Runtime{Stderr: io.Discard, Exec: cloud}}
+	_, err := backend.Acquire(context.Background(), core.AcquireRequest{RequestedSlug: "moor-7"})
+	if code := core.ExitCodeForError(err, -1); code != 4 || !strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("exit=%d err=%v, want the slug refused", code, err)
+	}
+	if len(cloud.vms) != 0 {
+		t.Fatalf("vms=%v, provider was asked to create a second VM under the slug", cloud.vms)
+	}
+
+	leaseID := "cbx_00000000000b"
+	leftover := core.NewLeaseSlug(leaseID)
+	leaveRouting(t, "cbx_00000000000c", leftover)
+	slug, reservation, err := backend.allocateLeaseSlug(leaseID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation.Release()
+	if slug == leftover {
+		t.Fatalf("allocated slug %q that a leftover routing still holds", slug)
+	}
+}
+
+func TestStopClearsRoutingOfLeaseProviderNoLongerHas(t *testing.T) {
+	isolateCrabboxState(t)
+	leaveRouting(t, "cbx_00000000000a", "moor-7")
+	cloud := &fakeCloud{vms: map[string]string{}}
+	err := stopLease(cloud, "moor-7")
+	if code := core.ExitCodeForError(err, -1); code != 4 || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("exit=%d err=%v, want exit 4 not found", code, err)
+	}
+	routings, err := core.ListExternalRoutings()
+	if err != nil || len(routings) != 0 {
+		t.Fatalf("routings=%d err=%v survived a stop the provider answered not found", len(routings), err)
+	}
+	backend := &leaseBackend{cfg: testConfig(), rt: core.Runtime{Stderr: io.Discard, Exec: cloud}}
+	_, _ = backend.Acquire(context.Background(), core.AcquireRequest{RequestedSlug: "moor-7"})
+	if len(cloud.vms) != 1 {
+		t.Fatalf("vms=%v, want the slug free for a new acquire", cloud.vms)
 	}
 }
