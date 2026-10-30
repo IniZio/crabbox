@@ -74,6 +74,12 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 			desired.CacheScope = b.cfg.Cache.Scope
 		}
 	}
+	// Record the lease before the provider can create anything for it, so a
+	// later stop still names the desired lease to the provider if this process
+	// dies or the acquire fails after the VM exists.
+	if _, err := core.PersistValidatedExternalLeaseRouting(core.ExternalRoutedLease{LeaseID: leaseID, Slug: slug, Name: desired.Name}, b.cfg.External); err != nil {
+		return core.LeaseTarget{}, core.Exit(2, "%v", err)
+	}
 	response, err := b.invoke(ctx, protocolRequest{
 		Operation: "acquire",
 		Desired:   desired,
@@ -107,14 +113,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	}
 	if err != nil {
 		if !retainReservationOnFailure {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, response.Lease))
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, response.Lease))
 		}
 		return core.LeaseTarget{}, err
 	}
 	lease, err := response.Lease.pinnedTarget(b.cfg, req.Keep)
 	if err != nil {
 		if !retainReservationOnFailure {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, response.Lease))
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, response.Lease))
 		}
 		return core.LeaseTarget{}, err
 	}
@@ -123,7 +129,7 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 			// An unacknowledged controller resource must never survive merely
 			// because warmup requested Keep=true. Roll back with the exact raw
 			// identity on the existing bounded, cancellation-detached path.
-			rollbackErr := b.rollbackAcquireRelease(ctx, leaseForProtocol(lease))
+			rollbackErr := b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease))
 			if rollbackErr == nil {
 				retainReservationOnFailure = false
 			}
@@ -135,28 +141,26 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	}
 	if err := validateLease(lease, true, true); err != nil {
 		if !retainReservationOnFailure {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, err
 	}
 	if _, err := core.PersistValidatedExternalLeaseRouting(routedLease(lease, slug), b.cfg.External); err != nil {
 		var acquireErr error = core.Exit(2, "%v", err)
 		if !retainReservationOnFailure {
-			acquireErr = appendAcquireCleanupError(acquireErr, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
+			acquireErr = appendAcquireCleanupError(acquireErr, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, acquireErr
 	}
 	if err := core.WaitForSSHReady(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
 		if !req.Keep {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-			core.RemoveExternalRouting(lease.LeaseID)
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, err
 	}
 	if err := b.resolveRelativeWorkRoot(ctx, &lease); err != nil {
 		if !req.Keep {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-			core.RemoveExternalRouting(lease.LeaseID)
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, err
 	}
@@ -168,16 +172,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		inUse, err := b.claimSlugInUse(claimSlug, leaseID)
 		if err != nil {
 			if !req.Keep {
-				err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-				core.RemoveExternalRouting(lease.LeaseID)
+				err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 			}
 			return core.LeaseTarget{}, err
 		}
 		if inUse {
 			var err error = core.Exit(4, "external provider returned slug %q which is already claimed in this lifecycle scope", claimSlug)
 			if !req.Keep {
-				err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-				core.RemoveExternalRouting(lease.LeaseID)
+				err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 			}
 			return core.LeaseTarget{}, err
 		}
@@ -185,16 +187,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		claimSlugReservation, reserved, err = b.reserveLeaseSlug(claimSlug, leaseID)
 		if err != nil {
 			if !req.Keep {
-				err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-				core.RemoveExternalRouting(lease.LeaseID)
+				err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 			}
 			return core.LeaseTarget{}, err
 		}
 		if !reserved {
 			var err error = core.Exit(4, "external provider returned slug %q which is already reserved in this lifecycle scope", claimSlug)
 			if !req.Keep {
-				err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-				core.RemoveExternalRouting(lease.LeaseID)
+				err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 			}
 			return core.LeaseTarget{}, err
 		}
@@ -202,16 +202,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	}
 	if err := b.claimLeaseForRepo(lease.LeaseID, claimSlug, req.Repo.Root, b.cfg.IdleTimeout, req.Reclaim); err != nil {
 		if !req.Keep {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
-			core.RemoveExternalRouting(lease.LeaseID)
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 		}
 		return core.LeaseTarget{}, err
 	}
 	if err := core.UpdateLeaseClaimEndpoint(lease.LeaseID, lease.Server, lease.SSH); err != nil {
 		if !req.Keep {
-			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
+			err = appendAcquireCleanupError(err, b.rollbackAcquire(ctx, leaseID, leaseForProtocol(lease)))
 			core.RemoveLeaseClaim(lease.LeaseID)
-			core.RemoveExternalRouting(lease.LeaseID)
 		}
 		return core.LeaseTarget{}, err
 	}
@@ -225,10 +223,15 @@ func (b *leaseBackend) validateAcquireProviderSSHOutput() error {
 	return nil
 }
 
-func (b *leaseBackend) rollbackAcquireRelease(ctx context.Context, lease *protocolLease) error {
+// The routing record is the only local trace of a resource the provider may
+// still hold, so it goes only once the provider confirms the release.
+func (b *leaseBackend) rollbackAcquire(ctx context.Context, leaseID string, lease *protocolLease) error {
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleRollbackTimeout)
 	defer cancel()
 	_, err := b.invoke(rollbackCtx, protocolRequest{Operation: "release", Lease: lease})
+	if err == nil {
+		core.RemoveExternalRouting(leaseID)
+	}
 	return err
 }
 

@@ -3889,8 +3889,8 @@ func TestAcquireAcknowledgesRawIdentityBeforeSidecarsAndRollsBackKeptLease(t *te
 			if pathErr != nil {
 				return pathErr
 			}
-			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
-				return fmt.Errorf("external routing existed before acquire acknowledgment: %v", statErr)
+			if _, statErr := os.Stat(path); statErr != nil {
+				return fmt.Errorf("acquire created a resource before recording its routing: %v", statErr)
 			}
 			return ackErr
 		},
@@ -3910,6 +3910,13 @@ func TestAcquireAcknowledgesRawIdentityBeforeSidecarsAndRollsBackKeptLease(t *te
 	}
 	if _, err := os.Stat(slugReservationPath(dir, slug)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reservation remained after successful callback-rejection rollback: %v", err)
+	}
+	routing, err := core.ExternalRoutingPath(leaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(routing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("routing remained after successful callback-rejection rollback: %v", err)
 	}
 }
 
