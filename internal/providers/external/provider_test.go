@@ -4658,3 +4658,44 @@ func (r *sequenceRunner) Run(ctx context.Context, req core.LocalCommandRequest) 
 	r.responses = r.responses[1:]
 	return core.LocalCommandResult{Stdout: response}, nil
 }
+
+func TestProtocolLeasePinsProviderSSHHostKey(t *testing.T) {
+	state := t.TempDir()
+	if err := os.Chmod(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", state)
+	const hostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l8GmJQ"
+	lease := protocolLease{
+		LeaseID: "cbx_abcdef123456", Slug: "test", Name: "devbox-test",
+		SSH: &protocolSSH{User: "tester", Host: "10.0.0.5", Key: "/tmp/key", HostKey: hostKey},
+	}.target(testConfig(), true)
+	if err := core.PrepareLeaseSSHTrust(&lease.SSH, lease.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(core.SSHBaseArgs(lease.SSH), " ")
+	if !strings.Contains(args, "StrictHostKeyChecking=yes") || strings.Contains(args, "StrictHostKeyChecking=no") || strings.Contains(args, "/dev/null") {
+		t.Fatalf("args=%s", args)
+	}
+	data, err := os.ReadFile(lease.SSH.KnownHostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), strings.Fields(hostKey)[1]) || !strings.Contains(args, "UserKnownHostsFile="+lease.SSH.KnownHostsFile) {
+		t.Fatalf("known_hosts=%q args=%s", data, args)
+	}
+}
+
+func TestProtocolLeaseWithoutHostKeyKeepsSSHOptions(t *testing.T) {
+	lease := protocolLease{
+		LeaseID: "cbx_abcdef123456", Slug: "test", Name: "devbox-test",
+		SSH: &protocolSSH{User: "tester", Host: "10.0.0.5", Key: "/tmp/key"},
+	}.target(testConfig(), true)
+	before := core.SSHBaseArgs(lease.SSH)
+	if err := core.PrepareLeaseSSHTrust(&lease.SSH, lease.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if lease.SSH.SSHHostKey != "" || lease.SSH.KnownHostsFile != "" || strings.Join(before, " ") != strings.Join(core.SSHBaseArgs(lease.SSH), " ") {
+		t.Fatalf("ssh=%#v", lease.SSH)
+	}
+}

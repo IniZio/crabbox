@@ -17,6 +17,15 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// PrepareLeaseSSHTrust pins target.SSHHostKey in the lease's isolated
+// known_hosts so providers outside this package reuse the coordinator path.
+func PrepareLeaseSSHTrust(target *SSHTarget, leaseID string) error {
+	return prepareLeaseSSHTrust(target, leaseID)
+}
+
+// SSHBaseArgs returns the ssh options Crabbox uses for target.
+func SSHBaseArgs(target SSHTarget) []string { return sshBaseArgs(target) }
+
 func prepareLeaseSSHTrust(target *SSHTarget, leaseID string) error {
 	if target == nil || strings.TrimSpace(target.SSHHostKey) == "" {
 		return nil

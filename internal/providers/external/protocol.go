@@ -82,6 +82,7 @@ type protocolSSH struct {
 	NoControlMaster bool     `json:"noControlMaster,omitempty"`
 	SSHConfigProxy  bool     `json:"sshConfigProxy,omitempty"`
 	ProxyCommand    string   `json:"proxyCommand,omitempty"`
+	HostKey         string   `json:"hostKey,omitempty"`
 }
 
 func repoForProtocol(repo core.Repo) *protocolRepo {
@@ -120,6 +121,7 @@ func leaseForProtocol(lease core.LeaseTarget) *protocolLease {
 			NoControlMaster: lease.SSH.NoControlMaster,
 			SSHConfigProxy:  lease.SSH.SSHConfigProxy,
 			ProxyCommand:    lease.SSH.ProxyCommand,
+			HostKey:         lease.SSH.SSHHostKey,
 		}
 	}
 	return result
@@ -183,6 +185,7 @@ func (p protocolLease) target(cfg core.Config, keep bool) core.LeaseTarget {
 		target.AuthSecret = p.SSH.AuthSecret
 		target.NoControlMaster = p.SSH.NoControlMaster
 		target.ProxyCommand = p.SSH.ProxyCommand
+		target.SSHHostKey = strings.TrimSpace(p.SSH.HostKey)
 		target.SSHConfigProxy = p.SSH.SSHConfigProxy || strings.TrimSpace(target.ProxyCommand) != ""
 		server.PublicNet.IPv4.IP = target.Host
 	}

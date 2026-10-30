@@ -125,6 +125,14 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		}
 		return core.LeaseTarget{}, acquireErr
 	}
+	if err := core.PrepareLeaseSSHTrust(&lease.SSH, lease.LeaseID); err != nil {
+		var acquireErr error = err
+		if !req.Keep {
+			acquireErr = appendAcquireCleanupError(acquireErr, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
+			core.RemoveExternalRouting(lease.LeaseID)
+		}
+		return core.LeaseTarget{}, acquireErr
+	}
 	if err := core.WaitForSSHReady(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
 		if !req.Keep {
 			err = appendAcquireCleanupError(err, b.rollbackAcquireRelease(ctx, leaseForProtocol(lease)))
@@ -340,6 +348,9 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		if _, err := core.PersistValidatedExternalRouting(lease.LeaseID, b.cfg.External); err != nil {
 			return core.LeaseTarget{}, core.Exit(2, "%v", err)
 		}
+	}
+	if err := core.PrepareLeaseSSHTrust(&lease.SSH, lease.LeaseID); err != nil {
+		return core.LeaseTarget{}, err
 	}
 	if err := core.WaitForSSHReady(ctx, &lease.SSH, b.rt.Stderr, "external provider SSH", core.BootstrapWaitTimeout(b.cfg)); err != nil {
 		return core.LeaseTarget{}, err

@@ -523,6 +523,12 @@ SSH config. `proxyCommand` supports control-plane tunnels directly. Either path
 is automatically reused by rsync and WebVNC. A non-empty `proxyCommand` implies
 proxy-backed SSH even if `sshConfigProxy` is omitted.
 
+`hostKey` is optional: a bare public key line such as `ssh-ed25519 AAAA...`
+with no hostname or comment. When present on acquire, resolve or resume,
+Crabbox records it in the lease's isolated `known_hosts` and connects with
+`StrictHostKeyChecking=yes` against that file. Without it, host-key handling is
+unchanged.
+
 When `readyCheck` is omitted, Crabbox uses a generic Linux tool check for
 `bash`, `python3`, `git`, `rsync`, and `tar`. Return an explicit `readyCheck`
 when the external provider needs a stronger guest bootstrap signal or targets a
