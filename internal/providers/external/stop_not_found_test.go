@@ -71,3 +71,73 @@ func TestReleaseProviderNotFoundExitsFour(t *testing.T) {
 		t.Fatalf("exit=%d err=%v, want exit 4", code, err)
 	}
 }
+
+// Lifecycle commands get no stdin, unlike protocol calls.
+type failingLifecycleRunner struct{ stderr string }
+
+func (r failingLifecycleRunner) Run(context.Context, core.LocalCommandRequest) (core.LocalCommandResult, error) {
+	return core.LocalCommandResult{Stderr: r.stderr, ExitCode: 1}, errors.New("exit status 1")
+}
+
+func lifecycleBackend(runner core.CommandRunner) *leaseBackend {
+	cfg := testConfig()
+	cfg.External.Command = ""
+	cfg.External.Lifecycle.Acquire.Argv = []string{"devboxctl", "new", "{{name}}"}
+	cfg.External.Lifecycle.Resolve.Argv = []string{"devboxctl", "show", "{{name}}"}
+	cfg.External.Lifecycle.Resolve.Output = lifecycleOutputJSONLease
+	cfg.External.Lifecycle.Release.Argv = []string{"devboxctl", "rm", "{{name}}"}
+	return &leaseBackend{cfg: cfg, rt: core.Runtime{Stderr: io.Discard, Exec: runner}}
+}
+
+func lifecycleExit(t *testing.T, operation string, runner core.CommandRunner) (int, string) {
+	t.Helper()
+	isolateCrabboxState(t)
+	backend := lifecycleBackend(runner)
+	_, err := backend.invoke(context.Background(), protocolRequest{
+		Operation: operation,
+		Lease:     &protocolLease{LeaseID: "cbx_000000000001", CloudID: "vm1", Slug: "moor-99"},
+		Desired:   &desiredLease{LeaseID: "cbx_000000000001", Slug: "moor-99", Name: "crabbox-moor-99"},
+	})
+	if err == nil {
+		t.Fatalf("lifecycle %s of a missing lease succeeded", operation)
+	}
+	return core.ExitCodeForError(err, -1), err.Error()
+}
+
+func TestLifecycleNotFoundExitsFourForStopOperations(t *testing.T) {
+	for _, operation := range []string{"resolve", "release"} {
+		t.Run(operation, func(t *testing.T) {
+			code, message := lifecycleExit(t, operation, failingLifecycleRunner{stderr: "lease moor-99 not found\n"})
+			if code != 4 || !strings.Contains(message, "lease moor-99 not found") {
+				t.Fatalf("exit=%d message=%q, want exit 4 keeping the message", code, message)
+			}
+		})
+	}
+}
+
+func TestLifecycleResolveNotFoundReachesBackendAsExitFour(t *testing.T) {
+	isolateCrabboxState(t)
+	backend := lifecycleBackend(failingLifecycleRunner{stderr: "lease moor-99 not found"})
+	_, err := backend.Resolve(context.Background(), core.ResolveRequest{ID: "moor-99-abcdef", ReleaseOnly: true})
+	if code := core.ExitCodeForError(err, -1); code != 4 {
+		t.Fatalf("exit=%d err=%v, want exit 4", code, err)
+	}
+}
+
+func TestLifecycleOtherFailureKeepsItsExit(t *testing.T) {
+	for _, operation := range []string{"resolve", "release"} {
+		t.Run(operation, func(t *testing.T) {
+			code, message := lifecycleExit(t, operation, failingLifecycleRunner{stderr: "permission denied\n"})
+			if code != 1 || !strings.Contains(message, "permission denied") {
+				t.Fatalf("exit=%d message=%q, want the command's exit 1", code, message)
+			}
+		})
+	}
+}
+
+func TestLifecycleAcquireNotFoundKeepsItsExit(t *testing.T) {
+	code, message := lifecycleExit(t, "acquire", failingLifecycleRunner{stderr: "image ubuntu not found\n"})
+	if code != 1 || !strings.Contains(message, "image ubuntu not found") {
+		t.Fatalf("exit=%d message=%q, want the command's exit 1", code, message)
+	}
+}

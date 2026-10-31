@@ -106,8 +106,19 @@ func (b *leaseBackend) invokeLifecycle(ctx context.Context, request protocolRequ
 			if message == "" {
 				message = strings.TrimSpace(result.Stdout)
 			}
+			reason := message
 			if rollbackErr != nil {
 				message = fmt.Sprintf("%s; rollback failed: %v", message, rollbackErr)
+			}
+			if providerReportedNotFound(request.Operation, reason) {
+				return protocolResponse{}, providerNotFoundError{core.Exit(
+					4,
+					"external lifecycle %s step %d failed: %v: %s",
+					request.Operation,
+					index+1,
+					err,
+					message,
+				)}
 			}
 			return protocolResponse{}, core.Exit(
 				result.ExitCode,
