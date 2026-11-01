@@ -58,7 +58,7 @@ func TestExternalLeaseCommandRoutingArgsKeepComplexStateOffArgv(t *testing.T) {
 }
 
 func TestExternalLeaseCommandRoutingArgsPreserveExplicitDesktopCredentialClears(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateCrabboxState(t)
 	const leaseID = "cbx_abcdef123456"
 	routing := core.ExternalConfig{Command: "provider-command", WorkRoot: "/work/crabbox"}
 	routing.Connection.Desktop = core.ExternalDesktopConfig{
