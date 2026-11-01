@@ -62,14 +62,23 @@ type providerDescriptionFlag struct {
 func (a App) providerDescribe(args []string) error {
 	fs := newFlagSet("providers describe", a.Stderr)
 	jsonOut := fs.Bool("json", false, "print JSON")
+	configured := fs.Bool("configured", false, "include features enabled by trusted configuration (loads config)")
 	flagArgs, positional := splitProviderDescribeArgs(args)
 	if err := parseFlags(fs, append(flagArgs, positional...)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return Exit(2, "usage: crabbox providers describe <provider> [--json]")
+		return Exit(2, "usage: crabbox providers describe <provider> [--configured] [--json]")
 	}
-	description, err := describeProvider(fs.Arg(0))
+	var cfg *Config
+	if *configured {
+		loaded, err := loadConfigInputs()
+		if err != nil {
+			return err
+		}
+		cfg = &loaded
+	}
+	description, err := describeProviderWithConfig(fs.Arg(0), cfg)
 	if err != nil {
 		return err
 	}
@@ -92,6 +101,12 @@ func splitProviderDescribeArgs(args []string) (flagArgs, positional []string) {
 }
 
 func describeProvider(requestedName string) (providerDescription, error) {
+	return describeProviderWithConfig(requestedName, nil)
+}
+
+// describeProviderWithConfig reports the provider's static description, or
+// with a config its configured features, the same view `providers --configured` gives.
+func describeProviderWithConfig(requestedName string, cfg *Config) (providerDescription, error) {
 	requested := normalizeProviderName(requestedName)
 	if requested == "" {
 		return providerDescription{}, Exit(2, "provider name must not be empty")
@@ -175,7 +190,11 @@ func describeProvider(requestedName string) (providerDescription, error) {
 		selected = []providerDescriptionFlag{}
 	}
 
-	entry := providerMatrixEntryFor(provider)
+	entrySpec := spec
+	if cfg != nil {
+		entrySpec.Features = ProviderFeaturesForConfig(provider, *cfg)
+	}
+	entry := providerMatrixEntryForSpec(provider, entrySpec)
 	if _, ok := provider.(NativeCheckpointProvider); ok {
 		entry.Lifecycle = append(entry.Lifecycle, "checkpoint-retirement-prepare")
 	}

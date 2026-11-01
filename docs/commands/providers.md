@@ -204,6 +204,10 @@ crabbox providers describe docker --json
 crabbox providers describe --json docker
 ```
 
+Add `--configured` to include features that trusted configuration enables, such
+as the external provider's `cache-volume` and `pause-resume`. It loads config the
+same way `crabbox providers --configured` does.
+
 Alias input is visible in both formats. Human output starts with the
 canonicalization and keeps command-level and provider-owned flags separate:
 
