@@ -40,6 +40,10 @@ func testConfig() core.Config {
 func isolateCrabboxState(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
+	// t.TempDir honours the umask; routing reads reject group-writable ancestors.
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
