@@ -36,6 +36,8 @@ func TestMain(m *testing.M) {
 		time.Sleep(10 * time.Minute)
 		os.Exit(egressDaemonFatalCode)
 	}
+	// State dirs must not be group-writable; tests should not depend on the runner's umask.
+	syscall.Umask(0o022)
 	os.Exit(runCLITests(m))
 }
 
