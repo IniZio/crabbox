@@ -149,6 +149,13 @@ it. Without it, both commands fail with exit 2 and
 `external.lifecycle`, which has no pause or resume operation. It does not change
 the local claim scope.
 
+`external.capabilities.pauseFreesMemory` declares that the provider's pause
+frees the guest's host memory (for example, a snapshot to disk), so schedulers
+may count a paused lease as using none. Like `pauseResume`, set it only in
+trusted user config; repository config, environment variables, and flags cannot
+enable it. It has no effect without `pauseResume`. With both, `crabbox providers
+describe --configured external` lists `pause-frees-memory`.
+
 `external.capabilities.cacheVolumes` lets Crabbox hand configured
 [cache volumes](../features/cache-volumes.md) to the adapter on `acquire`. Like
 `pauseResume`, set it only in trusted user config; repository config,

@@ -105,3 +105,34 @@ func TestExternalPauseResumeCapabilityRequiresTrustedConfig(t *testing.T) {
 		t.Fatalf("repository config changed pauseResume or skipped other capabilities: %+v", cfg.External.Capabilities)
 	}
 }
+
+func TestExternalPauseFreesMemoryCapabilityRequiresTrustedConfig(t *testing.T) {
+	var file fileConfig
+	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    pauseResume: true\n    pauseFreesMemory: true\n"), &file); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, file, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.External.Capabilities.PauseFreesMemory {
+		t.Fatal("repository config enabled pauseFreesMemory")
+	}
+	if err := applyFileConfigWithTrust(&cfg, file, true); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.External.Capabilities.PauseFreesMemory {
+		t.Fatal("trusted config did not enable pauseFreesMemory")
+	}
+
+	var disable fileConfig
+	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    pauseFreesMemory: false\n    idempotentLeaseId: true\n"), &disable); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyFileConfigWithTrust(&cfg, disable, false); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.External.Capabilities.PauseFreesMemory || !cfg.External.Capabilities.IdempotentLeaseID {
+		t.Fatalf("repository config changed pauseFreesMemory or skipped other capabilities: %+v", cfg.External.Capabilities)
+	}
+}

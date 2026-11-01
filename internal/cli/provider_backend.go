@@ -924,8 +924,11 @@ const (
 	// FeatureFixedCurrentRepoStop requires RepositoryScopedStopBackend for fixed IDs.
 	FeatureFixedCurrentRepoStop Feature = "fixed-current-repo-stop"
 	FeaturePauseResume          Feature = "pause-resume"
-	FeatureLeaseHeartbeat       Feature = "lease-heartbeat"
-	FeatureMCP                  Feature = "mcp-attachments"
+	// FeaturePauseFreesMemory means a paused lease no longer holds the guest's
+	// host memory (for example, the provider snapshots it to disk).
+	FeaturePauseFreesMemory Feature = "pause-frees-memory"
+	FeatureLeaseHeartbeat   Feature = "lease-heartbeat"
+	FeatureMCP              Feature = "mcp-attachments"
 	// FeatureEgressAllow means the provider enforces the generic egress allow-list.
 	FeatureEgressAllow Feature = "egress-allow"
 	// FeatureEgressAllowCreateOnly means the allow-list is fixed when the box is created.

@@ -359,6 +359,9 @@ type ExternalCapabilitiesConfig struct {
 	IdempotentLeaseID bool `yaml:"idempotentLeaseId,omitempty" json:"idempotentLeaseId,omitempty"`
 	PauseResume       bool `yaml:"pauseResume,omitempty" json:"pauseResume,omitempty"`
 	CacheVolumes      bool `yaml:"cacheVolumes,omitempty" json:"cacheVolumes,omitempty"`
+	// PauseFreesMemory declares that pause releases the guest's host memory.
+	// It only takes effect together with PauseResume.
+	PauseFreesMemory bool `yaml:"pauseFreesMemory,omitempty" json:"pauseFreesMemory,omitempty"`
 }
 
 type ExternalLifecycleConfig struct {
@@ -3302,12 +3305,14 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 		}
 		pauseResume := cfg.External.Capabilities.PauseResume
 		cacheVolumes := cfg.External.Capabilities.CacheVolumes
+		pauseFreesMemory := cfg.External.Capabilities.PauseFreesMemory
 		if applyOptional(&cfg.External.Capabilities, file.External.Capabilities) {
 			if !trusted {
 				// Pause and resume run adapter commands, and cache volumes hand
 				// repo-chosen paths to the adapter, so only user config may opt in.
 				cfg.External.Capabilities.PauseResume = pauseResume
 				cfg.External.Capabilities.CacheVolumes = cacheVolumes
+				cfg.External.Capabilities.PauseFreesMemory = pauseFreesMemory
 			}
 			recordConfigInput(cfg, "external", inputSource, true)
 		}

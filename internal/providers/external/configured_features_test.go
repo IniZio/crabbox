@@ -37,3 +37,28 @@ func TestSpecOmitsPauseResume(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredFeaturesPauseFreesMemory(t *testing.T) {
+	cfg := testConfig()
+	cfg.External.Capabilities.PauseFreesMemory = true
+	if got := (Provider{}).ConfiguredFeatures(cfg); got.Has(core.FeaturePauseFreesMemory) {
+		t.Fatalf("pauseFreesMemory without pauseResume listed: %v", got)
+	}
+
+	cfg.External.Capabilities.PauseResume = true
+	got := (Provider{}).ConfiguredFeatures(cfg)
+	if !got.Has(core.FeaturePauseFreesMemory) || !got.Has(core.FeaturePauseResume) {
+		t.Fatalf("features = %v, want pause-resume and pause-frees-memory", got)
+	}
+
+	cfg.External.Capabilities.PauseFreesMemory = false
+	if got := (Provider{}).ConfiguredFeatures(cfg); got.Has(core.FeaturePauseFreesMemory) {
+		t.Fatalf("pauseFreesMemory off but listed: %v", got)
+	}
+}
+
+func TestSpecOmitsPauseFreesMemory(t *testing.T) {
+	if (Provider{}).Spec().Features.Has(core.FeaturePauseFreesMemory) {
+		t.Fatal("static spec must not list pause-frees-memory")
+	}
+}
