@@ -4639,6 +4639,20 @@ func applyEnv(cfg *Config) error {
 		recordConfigInput(cfg, "external", configInputEnvironment, true)
 		cfg.credentialProvenance.externalRouting = credentialSourceEnvironment
 	}
+	if raw := strings.TrimSpace(os.Getenv("CRABBOX_CACHE_STORE_MAX_GB")); raw != "" {
+		gb, err := strconv.Atoi(raw)
+		if err != nil || gb <= 0 {
+			return Exit(2, "CRABBOX_CACHE_STORE_MAX_GB must be a positive integer, got %q", raw)
+		}
+		// Copy so the map shared with the parsed config file is not mutated.
+		merged := make(map[string]any, len(cfg.External.Config)+1)
+		for key, value := range cfg.External.Config {
+			merged[key] = value
+		}
+		merged["cacheStoreMaxGB"] = gb
+		cfg.External.Config = merged
+		recordConfigInput(cfg, "external", configInputEnvironment, true)
+	}
 	ApplyExternalDesktopEnvironmentOverrides(cfg)
 	if value, ok := getenvBool("CRABBOX_EXTERNAL_IDEMPOTENT_LEASE_ID"); ok {
 		cfg.External.Capabilities.IdempotentLeaseID = value

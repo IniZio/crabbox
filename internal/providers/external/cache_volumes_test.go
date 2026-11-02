@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -404,5 +405,43 @@ func TestClaimScopeIgnoresCacheScope(t *testing.T) {
 		if externalClaimScope(off) != externalClaimScope(on) {
 			t.Fatalf("idempotentLeaseId=%t: cache scope changed the claim scope", idempotent)
 		}
+	}
+}
+
+func TestAcquireSendsCacheStoreMaxGBFromEnv(t *testing.T) {
+	loaded := func(t *testing.T, env string) core.Config {
+		t.Helper()
+		home := isolateCrabboxState(t)
+		t.Setenv("CRABBOX_CONFIG", "")
+		t.Setenv("CRABBOX_PROVIDER", providerName)
+		t.Setenv("CRABBOX_CACHE_STORE_MAX_GB", env)
+		dir := filepath.Join(home, ".config", "crabbox")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		yaml := "external:\n  config:\n    cacheStoreMaxGB: 200\n"
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(t.TempDir())
+		cfg, err := core.LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	for env, want := range map[string]any{"50": 50, "": 200} {
+		t.Run("env="+env, func(t *testing.T) {
+			loadedCfg := loaded(t, env)
+			cfg := testConfig()
+			cfg.External.Config = loadedCfg.External.Config
+			runner, _, _ := acquireWithCacheVolumes(t, cfg, cacheVolumeReply(""))
+			if len(runner.requests) == 0 {
+				t.Fatal("no request sent")
+			}
+			if got := fmt.Sprint(runner.requests[0].Config["cacheStoreMaxGB"]); got != fmt.Sprint(want) {
+				t.Fatalf("request config cacheStoreMaxGB=%s, want %v", got, want)
+			}
+		})
 	}
 }
