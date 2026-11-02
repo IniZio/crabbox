@@ -574,6 +574,7 @@ CRABBOX_CACHE_PNPM / _NPM / _DOCKER / _GIT
 CRABBOX_CACHE_MAX_GB
 CRABBOX_CACHE_PURGE_ON_RELEASE
 CRABBOX_CACHE_VOLUMES
+CRABBOX_CACHE_STORE_MAX_GB  # positive integer; sets external.config.cacheStoreMaxGB sent to the external provider
 ```
 
 Tailscale:
