@@ -659,7 +659,10 @@ again after claiming the lease.
 that enable `idempotentLeaseId` must return a real array, including `[]` for an
 empty inventory, and every row must contain canonical `leaseId`, normalized
 `slug`, exact `name`, and immutable `cloudId`; omitted, partial, or `null`
-inventory cannot prove controller absence. `doctor` may return a human-readable
+inventory cannot prove controller absence. A row may carry an optional integer
+`hostMemoryMiB` with the host memory the lease uses; `crabbox list --json`
+forwards it unchanged and omits it when the adapter does not report it.
+`doctor` may return a human-readable
 `message`. Any operation may return `{"error":"..."}`; error-only responses do
 not need `protocolVersion`.
 

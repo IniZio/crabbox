@@ -109,6 +109,7 @@ type Server struct {
 	Labels              map[string]string `json:"labels"`
 	ProviderMetadata    map[string]any    `json:"provider_metadata,omitempty"`
 	ImageEvidence       *ImageEvidence    `json:"imageEvidence,omitempty"`
+	HostMemoryMiB       *int              `json:"hostMemoryMiB,omitempty"` // Provider-reported host memory; never inferred.
 	PublicNet           struct {
 		IPv4 struct {
 			IP string `json:"ip"`
