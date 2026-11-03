@@ -41,6 +41,10 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 	if err := b.validateAcquireProviderSSHOutput(); err != nil {
 		return core.LeaseTarget{}, err
 	}
+	operation, checkpointID, err := acquireOperation(b.cfg, req.CheckpointSource)
+	if err != nil {
+		return core.LeaseTarget{}, err
+	}
 	leaseID := strings.TrimSpace(req.RequestedLeaseID)
 	fixedLeaseID := leaseID != ""
 	if leaseID == "" {
@@ -81,11 +85,12 @@ func (b *leaseBackend) Acquire(ctx context.Context, req core.AcquireRequest) (_ 
 		return core.LeaseTarget{}, core.Exit(2, "%v", err)
 	}
 	response, err := b.invoke(ctx, protocolRequest{
-		Operation: "acquire",
-		Desired:   desired,
-		Keep:      req.Keep,
-		Reclaim:   req.Reclaim,
-		Repo:      repoForProtocol(req.Repo),
+		Operation:    operation,
+		CheckpointID: checkpointID,
+		Desired:      desired,
+		Keep:         req.Keep,
+		Reclaim:      req.Reclaim,
+		Repo:         repoForProtocol(req.Repo),
 	})
 	if err != nil {
 		return core.LeaseTarget{}, err
@@ -837,9 +842,10 @@ func externalControllerScope(cfg core.Config) (string, error) {
 	}
 	if cfg.External.Capabilities.IdempotentLeaseID {
 		capabilities := cfg.External.Capabilities
-		// pauseResume and cacheVolumes only gate optional behavior; toggling them must not orphan existing claims.
+		// pauseResume, cacheVolumes and checkpoints only gate optional behavior; toggling them must not orphan existing claims.
 		capabilities.PauseResume = false
 		capabilities.CacheVolumes = false
+		capabilities.Checkpoints = false
 		scope.Capabilities = &capabilities
 	}
 	if lifecycleConfigured(cfg.External) {

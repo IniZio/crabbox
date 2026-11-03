@@ -218,7 +218,7 @@ func (b *leaseBackend) invokeLifecycle(ctx context.Context, request protocolRequ
 
 func (b *leaseBackend) validateProviderSSHOutput(request protocolRequest, response protocolResponse) error {
 	if request.SkipSSHOutputValidation ||
-		(request.Operation != "acquire" && request.Operation != "list" &&
+		(request.Operation != "acquire" && request.Operation != "checkpointFork" && request.Operation != "list" &&
 			(request.Operation != "resolve" || request.ReleaseOnly)) {
 		return nil
 	}

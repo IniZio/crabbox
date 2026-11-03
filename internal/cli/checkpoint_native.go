@@ -472,6 +472,7 @@ func coordinatorImageFromNativeCheckpoint(image NativeCheckpointImage) Coordinat
 		SnapshotIDs:      image.SnapshotIDs,
 		Architecture:     image.Architecture,
 		Direct:           image.Direct,
+		bytes:            image.Bytes,
 	}
 }
 
@@ -710,6 +711,7 @@ func (record *checkpointRecord) applyNativeImage(image CoordinatorImage, noReboo
 	record.Native.ResourceUniqueID = image.ResourceUniqueID
 	record.Native.Architecture = image.Architecture
 	record.Native.SnapshotIDs = image.SnapshotIDs
+	record.Native.Bytes = image.bytes
 	record.Native.Direct = image.Direct
 	record.Native.Strategy = checkpointStrategyForKind(record.Kind)
 	record.Native.NoReboot = noReboot
@@ -755,6 +757,8 @@ func checkpointKindForProviderImage(image CoordinatorImage) string {
 		return checkpointKindDaytona
 	case checkpointKindCloudflare:
 		return checkpointKindCloudflare
+	case checkpointKindExternal:
+		return checkpointKindExternal
 	}
 	switch image.Provider {
 	case "azure":
@@ -778,7 +782,7 @@ func checkpointStrategyForKind(kind string) string {
 	switch kind {
 	case checkpointKindAWSAMI, checkpointKindAzure, checkpointKindGCP, checkpointKindMachine0, checkpointKindDockerCommit:
 		return checkpointStrategyImage
-	case checkpointKindAWSEBS, checkpointKindAzureOS, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindParallels, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare:
+	case checkpointKindAWSEBS, checkpointKindAzureOS, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindParallels, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare, checkpointKindExternal:
 		return checkpointStrategyDiskSnapshot
 	default:
 		return ""

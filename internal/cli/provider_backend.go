@@ -623,6 +623,7 @@ type NativeCheckpointImage struct {
 	SnapshotIDs      []string
 	Architecture     string
 	Direct           bool
+	Bytes            int64
 }
 
 type NativeCheckpointCreateRequest struct {

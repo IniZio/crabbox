@@ -105,3 +105,33 @@ func TestExternalPauseResumeCapabilityRequiresTrustedConfig(t *testing.T) {
 		t.Fatalf("repository config changed pauseResume or skipped other capabilities: %+v", cfg.External.Capabilities)
 	}
 }
+
+func TestExternalCheckpointsCapabilityRequiresTrustedConfig(t *testing.T) {
+	var file fileConfig
+	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    checkpoints: true\n"), &file); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, file, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.External.Capabilities.Checkpoints {
+		t.Fatal("repository config enabled checkpoints")
+	}
+	if err := applyFileConfigWithTrust(&cfg, file, true); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.External.Capabilities.Checkpoints {
+		t.Fatal("trusted config did not enable checkpoints")
+	}
+	var disable fileConfig
+	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    checkpoints: false\n"), &disable); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyFileConfigWithTrust(&cfg, disable, false); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.External.Capabilities.Checkpoints {
+		t.Fatal("repository config disabled trusted checkpoints")
+	}
+}

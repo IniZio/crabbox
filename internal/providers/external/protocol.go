@@ -19,6 +19,9 @@ type protocolRequest struct {
 	Lease                   *protocolLease                    `json:"lease,omitempty"`
 	Expected                *protocolExpectedProviderIdentity `json:"expected,omitempty"`
 	ID                      string                            `json:"id,omitempty"`
+	LeaseID                 string                            `json:"leaseId,omitempty"`
+	CheckpointID            string                            `json:"checkpointId,omitempty"`
+	Name                    string                            `json:"name,omitempty"`
 	State                   string                            `json:"state,omitempty"`
 	Keep                    bool                              `json:"keep,omitempty"`
 	Reclaim                 bool                              `json:"reclaim,omitempty"`
@@ -84,6 +87,8 @@ type protocolResponse struct {
 	Leases               []protocolLease `json:"leases,omitempty"`
 	Message              string          `json:"message,omitempty"`
 	Error                string          `json:"error,omitempty"`
+	CheckpointID         string          `json:"checkpointId,omitempty"`
+	Bytes                int64           `json:"bytes,omitempty"`
 	SynthesizedIdentity  bool            `json:"-"`
 	RawLifecycleIdentity bool            `json:"-"`
 }

@@ -41,6 +41,7 @@ const (
 	checkpointKindDaytona      = "daytona-snapshot"
 	checkpointKindIncus        = "incus-image"
 	checkpointKindCloudflare   = "cloudflare-container-snapshot"
+	checkpointKindExternal     = "external-snapshot"
 
 	checkpointStrategyAuto         = "auto"
 	checkpointStrategyImage        = "image"
@@ -84,6 +85,7 @@ type checkpointRecord struct {
 		DetachedReason   string            `json:"detachedReason,omitempty"`
 		Architecture     string            `json:"architecture,omitempty"`
 		SnapshotIDs      []string          `json:"snapshotIds,omitempty"`
+		Bytes            int64             `json:"bytes,omitempty"`
 		Direct           bool              `json:"direct,omitempty"`
 		Strategy         string            `json:"strategy,omitempty"`
 		NoReboot         bool              `json:"noReboot,omitempty"`
@@ -273,7 +275,7 @@ func (a App) checkpointCreate(ctx context.Context, args []string) (err error) {
 		return err
 	}
 	switch createKind {
-	case checkpointKindRecipe, checkpointKindAWSAMI, checkpointKindAWSEBS, checkpointKindAzure, checkpointKindAzureOS, checkpointKindGCP, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindMachine0, checkpointKindParallels, checkpointKindDockerCommit, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare, checkpointKindArchive:
+	case checkpointKindRecipe, checkpointKindAWSAMI, checkpointKindAWSEBS, checkpointKindAzure, checkpointKindAzureOS, checkpointKindGCP, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindMachine0, checkpointKindParallels, checkpointKindDockerCommit, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare, checkpointKindExternal, checkpointKindArchive:
 		record.Kind = createKind
 	default:
 		return Exit(2, "checkpoint mode must be auto, native, or archive")
@@ -323,7 +325,7 @@ func (a App) checkpointCreate(ctx context.Context, args []string) (err error) {
 		}()
 		switch createKind {
 		case checkpointKindRecipe:
-		case checkpointKindAWSAMI, checkpointKindAWSEBS, checkpointKindAzure, checkpointKindAzureOS, checkpointKindGCP, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindMachine0, checkpointKindParallels, checkpointKindDockerCommit, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare:
+		case checkpointKindAWSAMI, checkpointKindAWSEBS, checkpointKindAzure, checkpointKindAzureOS, checkpointKindGCP, checkpointKindGCPDisk, checkpointKindHetzner, checkpointKindMachine0, checkpointKindParallels, checkpointKindDockerCommit, checkpointKindDaytona, checkpointKindIncus, checkpointKindCloudflare, checkpointKindExternal:
 			createStrategy := checkpointCreateStrategy(*mode, *strategy, createKind)
 			retention := checkpointRetentionFromDuration(retentionDuration)
 			createContext := withCheckpointCreateContext(ctx, record, retention, func(managed bool) error {
@@ -2857,7 +2859,7 @@ func nativeCheckpointForkWorkdir(cfg Config, leaseID, repoName, override string)
 }
 
 func isNativeCheckpointKind(kind string) bool {
-	return kind == checkpointKindAWSAMI || kind == checkpointKindAWSEBS || kind == checkpointKindAzure || kind == checkpointKindAzureOS || kind == checkpointKindGCP || kind == checkpointKindGCPDisk || kind == checkpointKindHetzner || kind == checkpointKindMachine0 || kind == checkpointKindParallels || kind == checkpointKindDockerCommit || kind == checkpointKindDaytona || kind == checkpointKindIncus || kind == checkpointKindCloudflare
+	return kind == checkpointKindAWSAMI || kind == checkpointKindAWSEBS || kind == checkpointKindAzure || kind == checkpointKindAzureOS || kind == checkpointKindGCP || kind == checkpointKindGCPDisk || kind == checkpointKindHetzner || kind == checkpointKindMachine0 || kind == checkpointKindParallels || kind == checkpointKindDockerCommit || kind == checkpointKindDaytona || kind == checkpointKindIncus || kind == checkpointKindCloudflare || kind == checkpointKindExternal
 }
 
 func checkpointProviderForKind(kind string) string {
@@ -2882,6 +2884,8 @@ func checkpointProviderForKind(kind string) string {
 		return "incus"
 	case checkpointKindCloudflare:
 		return "cloudflare"
+	case checkpointKindExternal:
+		return "external"
 	default:
 		return ""
 	}
@@ -3094,6 +3098,7 @@ const (
 	CheckpointKindDaytona          = checkpointKindDaytona
 	CheckpointKindIncus            = checkpointKindIncus
 	CheckpointKindCloudflare       = checkpointKindCloudflare
+	CheckpointKindExternal         = checkpointKindExternal
 	CheckpointStrategyImage        = checkpointStrategyImage
 	CheckpointStrategyDiskSnapshot = checkpointStrategyDiskSnapshot
 )
