@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- External provider: remove the claim and routing of a claimed lease once `release` or a release-only `resolve` reports it not found, for both JSON-protocol and lifecycle-command providers, so a gone lease no longer blocks its slug.
 - smolvm: upload workspace archives and environment profiles through the files API instead of base64 in exec requests, so repositories over ~750 KiB compressed no longer fail with 413, and keep complete command output past 1 MiB (or report truncation). Narrowed API keys now need the `machine:files` scope. [PR 2915](https://github.com/openclaw/crabbox/pull/2915). Thanks @NickyHeC.
 - Security: build source, release binaries, container runners, and developer-image toolchains with Go 1.27.3 to fix reachable GO-2026-6809 certificate validation, retaining the Go 1.26 minimum.
 - Cloudflare Dynamic Workers: cancel stalled response reads at their deadline instead of blocking while closing the response body.
