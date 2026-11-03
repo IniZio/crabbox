@@ -41,8 +41,9 @@ func (Provider) Spec() core.ProviderSpec {
 
 var _ core.ProviderConfiguredFeatures = Provider{}
 
-// ConfiguredFeatures adds pause-resume and cache-volume only for trusted
-// config. Declarative lifecycle has no pause, resume or volume operation.
+// ConfiguredFeatures adds pause-resume, cache-volume and checkpoint features only
+// for trusted config. Declarative lifecycle has no pause, resume, volume or
+// checkpoint operation.
 func (p Provider) ConfiguredFeatures(cfg core.Config) core.FeatureSet {
 	features := p.Spec().Features
 	if lifecycleConfigured(cfg.External) {
@@ -53,6 +54,9 @@ func (p Provider) ConfiguredFeatures(cfg core.Config) core.FeatureSet {
 	}
 	if cfg.External.Capabilities.CacheVolumes {
 		features = append(append(core.FeatureSet{}, features...), core.FeatureCacheVolume)
+	}
+	if cfg.External.Capabilities.Checkpoints {
+		features = append(append(core.FeatureSet{}, features...), core.FeatureCheckpoint, core.FeatureFork, core.FeatureSnapshot)
 	}
 	return features
 }

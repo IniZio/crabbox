@@ -25,6 +25,7 @@ external:
   capabilities:
     idempotentLeaseId: true
     pauseResume: true
+    checkpoints: true
   config:
     backend: vm
     namespace: team-devboxes
@@ -157,6 +158,19 @@ environment variables, and flags cannot enable it. With it, `crabbox providers
 volumes are not sent and a `required` volume fails early with
 `provider=external does not support required cache volume`. It has no effect with
 a declarative `external.lifecycle`, and it does not change the local claim scope.
+
+`external.capabilities.checkpoints` enables native
+[checkpoints](../commands/checkpoint.md) through the `checkpointCreate`,
+`checkpointFork`, and `checkpointDelete` protocol operations described under
+[Checkpoints](#checkpoints). Like `pauseResume`, set it only in trusted user
+config; repository config, environment variables, and flags cannot enable it.
+Without it, `crabbox checkpoint create --mode native`, `checkpoint fork`, and
+`checkpoint delete` of an `external-snapshot` checkpoint fail with exit 2 and
+`provider=external does not support checkpoints`. With it, `crabbox providers
+--json --configured` lists `workspace-checkpoint`, `workspace-fork`, and
+`provider-snapshot` for `external`. A lease keeps the capabilities it was
+acquired with, because its routing file records them. It has no effect with a
+declarative `external.lifecycle`, and it does not change the local claim scope.
 
 Local claims are scoped to a fingerprint of the selected protocol command or
 declarative lifecycle, connection templates, `external.config`, normalized
@@ -526,6 +540,9 @@ touch
 cleanup
 pause   (only with external.capabilities.pauseResume)
 resume  (only with external.capabilities.pauseResume)
+checkpointCreate  (only with external.capabilities.checkpoints)
+checkpointFork    (only with external.capabilities.checkpoints)
+checkpointDelete  (only with external.capabilities.checkpoints)
 ```
 
 `pause` and `resume` first send a `resolve` request for the lease with
@@ -696,3 +713,56 @@ Controller stop additionally supplies its full persisted lease ID, attempt ID,
 slug, and `cloudId` expectation. Release-only resolution and release both
 validate every nonempty expected field before the adapter's destructive
 operation runs, including attempts canceled before a local claim was written.
+
+### Checkpoints
+
+With `external.capabilities.checkpoints`, `crabbox checkpoint create --mode
+native`, `checkpoint fork`, and `checkpoint delete` drive the adapter. Crabbox
+keeps the checkpoint record locally as kind `external-snapshot`; the adapter
+owns the snapshot itself and keys it by Crabbox's `chk_...` checkpoint ID.
+
+`checkpointCreate` snapshots a running lease. The lease keeps running:
+
+```json
+{
+  "protocolVersion": 1,
+  "operation": "checkpointCreate",
+  "config": {"backend": "vm"},
+  "leaseId": "cbx_0123456789ab",
+  "checkpointId": "chk_0123456789abcdef",
+  "name": "after-clone"
+}
+```
+
+The response repeats the ID and may report the snapshot size, which Crabbox
+records as `native.bytes`. A different `checkpointId` fails the create:
+
+```json
+{"protocolVersion": 1, "checkpointId": "chk_0123456789abcdef", "bytes": 1073741824}
+```
+
+`checkpointFork` is an `acquire` request with the same `desired`, `keep`,
+`reclaim`, and `repo` fields plus the `checkpointId` to start from. Answer it
+exactly like `acquire`: the new lease has a fresh identity from `desired`, and
+Crabbox then waits for SSH, claims the lease, and moves the checkpoint's
+workdir to the new lease's workdir when it exists. For an unknown checkpoint,
+exit nonzero with `checkpoint not found` on stderr; Crabbox fails the fork with
+that message.
+
+```json
+{
+  "protocolVersion": 1,
+  "operation": "checkpointFork",
+  "checkpointId": "chk_0123456789abcdef",
+  "desired": {"leaseId": "cbx_ba9876543210", "slug": "retry-1", "name": "crabbox-retry-1-0a1b2c3d"},
+  "keep": true
+}
+```
+
+`checkpointDelete` carries only the `checkpointId` and returns
+`{"protocolVersion":1}`. Deleting an unknown ID succeeds, so a retried delete
+converges.
+
+There is no lookup operation, so `crabbox checkpoint list --verify` reports
+external checkpoints as `unverified_ref`; a snapshot the adapter has lost shows
+up as `checkpoint not found` on the next fork.

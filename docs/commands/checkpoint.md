@@ -22,8 +22,8 @@ tools, caches, services. Stored in the provider account, so it incurs provider
 storage costs. Recorded as one of `aws-ami`, `aws-ebs-snapshot`,
 `azure-managed-image`, `azure-os-disk-snapshot`, `gcp-machine-image`,
 `gcp-disk-snapshot`, `hetzner-snapshot`, `machine0-image`,
-`parallels-snapshot`, `daytona-snapshot`, `incus-image`, or
-`cloudflare-container-snapshot`.
+`parallels-snapshot`, `daytona-snapshot`, `incus-image`,
+`cloudflare-container-snapshot`, or `external-snapshot`.
 
 **Archive (workspace tarball)** — captures only the contents of the remote
 workdir as `workspace.tar.gz`. Portable across any POSIX SSH lease, but it does
@@ -32,7 +32,9 @@ not preserve machine state.
 `--mode auto` (the default) picks native for providers that support it on the
 current lease and falls back to an archive otherwise. Incus native container
 capture is opt-in with `--mode native`; default auto mode retains the archive
-fallback. There is also a
+fallback. External provider checkpoints also need `--mode native`, and the
+adapter must opt in with `external.capabilities.checkpoints` (see
+[External Provider](../providers/external.md#checkpoints)). There is also a
 metadata-only `recipe` kind produced by `--recipe-only`, which records the
 checkpoint without creating any artifact.
 
@@ -840,6 +842,7 @@ See [Checkpoints](../features/checkpoints.md#lifecycle-and-expiry).
 | Incus Linux containers (direct only, `--mode native`) | Private root-disk image | Same snapshot-to-image capture |
 | Parallels | VM snapshot | — |
 | Cloudflare containers | Container filesystem snapshot | not supported |
+| External (`--mode native`, `external.capabilities.checkpoints`) | Adapter-defined snapshot | Same adapter snapshot |
 
 Brokered native checkpoints (through a configured coordinator) cover AWS
 Linux/macOS and Azure/GCP Linux leases. Azure Windows leases use the direct
