@@ -164,6 +164,15 @@ func (c *serveRelayControls) pinnedProxyMaster(ctx context.Context, target SSHTa
 }
 
 func (c *serveRelayControls) closeLease(leaseID string) error {
+	return c.closeMasters(leaseID, true)
+}
+
+// dropLease closes leaseID's masters but lets later calls open new ones.
+func (c *serveRelayControls) dropLease(leaseID string) error {
+	return c.closeMasters(leaseID, false)
+}
+
+func (c *serveRelayControls) closeMasters(leaseID string, retire bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Provider proxy masters are keyed by the lease's pinned host-key alias.
@@ -171,12 +180,15 @@ func (c *serveRelayControls) closeLease(leaseID string) error {
 	if leaseID == "" {
 		c.closed = true
 	} else {
-		if c.retired == nil {
-			c.retired = make(map[string]bool)
-		}
-		c.retired[leaseID] = true
-		if alias, _ = leaseHostKeyAlias(leaseID); alias != "" {
-			c.retired[alias] = true
+		alias, _ = leaseHostKeyAlias(leaseID)
+		if retire {
+			if c.retired == nil {
+				c.retired = make(map[string]bool)
+			}
+			c.retired[leaseID] = true
+			if alias != "" {
+				c.retired[alias] = true
+			}
 		}
 	}
 	var err error
