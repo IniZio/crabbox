@@ -249,6 +249,12 @@ step's stdout is parsed; earlier stdout is forwarded as diagnostic output.
 later acquire step fails after at least one successful step, unless the caller
 requested `--keep`.
 
+A failing `resolve` or `release` command whose message (stderr, else stdout)
+ends in `not found` tells Crabbox the lease is gone. Stop then exits 4 and
+removes the lease's claim and routing, as it does for the JSON protocol's
+`... not found` error. Any other failure keeps its own exit code and local
+state.
+
 `connection.resourceName` defaults to `{{name}}`; use it when the provider has
 stricter resource-name limits than Crabbox. Crabbox stores the resolved value
 with the lease so `json-name-array` inventory can recover the original lease

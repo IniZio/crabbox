@@ -281,9 +281,11 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		}
 	}
 	keep := true
+	var claimed *core.LeaseClaim
 	if claim, ok, err := b.resolveClaim(req.ID); err != nil {
 		return core.LeaseTarget{}, err
 	} else if ok {
+		claimed = &claim
 		name := core.Blank(claim.Labels["name"], core.LeaseProviderName(claim.LeaseID, claim.Slug))
 		id = name
 		desired = &desiredLease{LeaseID: claim.LeaseID, Slug: claim.Slug, Name: name}
@@ -346,6 +348,11 @@ func (b *leaseBackend) Resolve(ctx context.Context, req core.ResolveRequest) (co
 		if routing != nil && req.ReleaseOnly && errors.As(err, new(providerNotFoundError)) {
 			if cleanupErr := core.RemoveExternalRoutingIfUnchanged(desired.LeaseID, *routing); cleanupErr != nil {
 				return core.LeaseTarget{}, fmt.Errorf("%w; remove routing of absent lease: %v", err, cleanupErr)
+			}
+		}
+		if claimed != nil && req.ReleaseOnly && errors.As(err, new(providerNotFoundError)) {
+			if cleanupErr := forgetAbsentClaimedLease(*claimed); cleanupErr != nil {
+				return core.LeaseTarget{}, fmt.Errorf("%w; remove state of absent lease: %v", err, cleanupErr)
 			}
 		}
 		return core.LeaseTarget{}, err
@@ -470,13 +477,26 @@ func (b *leaseBackend) ReleaseLease(ctx context.Context, req core.ReleaseLeaseRe
 		Expected:  expected,
 		Force:     req.Force,
 	})
-	if err == nil && expected == nil {
+	// Not found from release is the provider confirming the lease is gone, so
+	// its claim and routing would only keep the slug taken.
+	if expected == nil && (err == nil || errors.As(err, new(providerNotFoundError))) {
 		if externalLeaseIDSafeForClaimPath(req.Lease.LeaseID) {
 			core.RemoveLeaseClaim(req.Lease.LeaseID)
 		}
 		core.RemoveExternalRouting(req.Lease.LeaseID)
 	}
 	return err
+}
+
+func forgetAbsentClaimedLease(claim core.LeaseClaim) error {
+	if !externalLeaseIDSafeForClaimPath(claim.LeaseID) {
+		return nil
+	}
+	if err := core.RemoveLeaseClaimIfUnchanged(claim.LeaseID, claim); err != nil {
+		return err
+	}
+	core.RemoveExternalRouting(claim.LeaseID)
+	return nil
 }
 
 func (b *leaseBackend) CleanupConfirmedAbsentLocalState(ctx context.Context, req core.ConfirmedAbsentLocalCleanupRequest) error {
