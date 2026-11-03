@@ -479,6 +479,9 @@ type CoordinatorImage struct {
 	managedCheckpoint    *coordinatorCheckpoint
 	captureEstablished   bool
 	bytes                int64
+	parentCheckpointID   string
+	uniqueBytes          int64
+	apparentBytes        int64
 }
 
 type CoordinatorImageDefaultState struct {

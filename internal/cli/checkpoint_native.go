@@ -467,19 +467,22 @@ func (a App) createNativeCheckpointRequest(ctx context.Context, req NativeCheckp
 
 func coordinatorImageFromNativeCheckpoint(image NativeCheckpointImage) CoordinatorImage {
 	return CoordinatorImage{
-		ID:               image.ID,
-		Name:             image.Name,
-		State:            image.State,
-		Provider:         image.Provider,
-		Kind:             image.Kind,
-		Region:           image.Region,
-		AccountID:        image.AccountID,
-		ResourceID:       image.ResourceID,
-		ResourceUniqueID: image.ResourceUniqueID,
-		SnapshotIDs:      image.SnapshotIDs,
-		Architecture:     image.Architecture,
-		Direct:           image.Direct,
-		bytes:            image.Bytes,
+		ID:                 image.ID,
+		Name:               image.Name,
+		State:              image.State,
+		Provider:           image.Provider,
+		Kind:               image.Kind,
+		Region:             image.Region,
+		AccountID:          image.AccountID,
+		ResourceID:         image.ResourceID,
+		ResourceUniqueID:   image.ResourceUniqueID,
+		SnapshotIDs:        image.SnapshotIDs,
+		Architecture:       image.Architecture,
+		Direct:             image.Direct,
+		bytes:              image.Bytes,
+		parentCheckpointID: image.ParentCheckpointID,
+		uniqueBytes:        image.UniqueBytes,
+		apparentBytes:      image.ApparentBytes,
 	}
 }
 
@@ -719,6 +722,9 @@ func (record *checkpointRecord) applyNativeImage(image CoordinatorImage, noReboo
 	record.Native.Architecture = image.Architecture
 	record.Native.SnapshotIDs = image.SnapshotIDs
 	record.Native.Bytes = image.bytes
+	record.Native.ParentCheckpointID = image.parentCheckpointID
+	record.Native.UniqueBytes = image.uniqueBytes
+	record.Native.ApparentBytes = image.apparentBytes
 	record.Native.Direct = image.Direct
 	record.Native.Strategy = checkpointStrategyForKind(record.Kind)
 	record.Native.NoReboot = noReboot

@@ -624,6 +624,11 @@ type NativeCheckpointImage struct {
 	Architecture     string
 	Direct           bool
 	Bytes            int64
+	// ParentCheckpointID, UniqueBytes and ApparentBytes are set only by
+	// providers that store a checkpoint as a delta over another one.
+	ParentCheckpointID string
+	UniqueBytes        int64
+	ApparentBytes      int64
 }
 
 type NativeCheckpointCreateRequest struct {

@@ -72,24 +72,28 @@ type checkpointRecord struct {
 	Retention          *coordinatorCheckpointRetention `json:"retention,omitempty"`
 	CoordinatorState   string                          `json:"coordinatorState,omitempty"`
 	Native             struct {
-		Provider         string            `json:"provider,omitempty"`
-		ImageID          string            `json:"imageId,omitempty"`
-		Kind             string            `json:"kind,omitempty"`
-		Name             string            `json:"name,omitempty"`
-		State            string            `json:"state,omitempty"`
-		Region           string            `json:"region,omitempty"`
-		AccountID        string            `json:"accountId,omitempty"`
-		Project          string            `json:"project,omitempty"`
-		Resource         string            `json:"resource,omitempty"`
-		ResourceUniqueID string            `json:"resourceUniqueId,omitempty"`
-		DetachedReason   string            `json:"detachedReason,omitempty"`
-		Architecture     string            `json:"architecture,omitempty"`
-		SnapshotIDs      []string          `json:"snapshotIds,omitempty"`
-		Bytes            int64             `json:"bytes,omitempty"`
-		Direct           bool              `json:"direct,omitempty"`
-		Strategy         string            `json:"strategy,omitempty"`
-		NoReboot         bool              `json:"noReboot,omitempty"`
-		Metadata         map[string]string `json:"metadata,omitempty"`
+		Provider         string   `json:"provider,omitempty"`
+		ImageID          string   `json:"imageId,omitempty"`
+		Kind             string   `json:"kind,omitempty"`
+		Name             string   `json:"name,omitempty"`
+		State            string   `json:"state,omitempty"`
+		Region           string   `json:"region,omitempty"`
+		AccountID        string   `json:"accountId,omitempty"`
+		Project          string   `json:"project,omitempty"`
+		Resource         string   `json:"resource,omitempty"`
+		ResourceUniqueID string   `json:"resourceUniqueId,omitempty"`
+		DetachedReason   string   `json:"detachedReason,omitempty"`
+		Architecture     string   `json:"architecture,omitempty"`
+		SnapshotIDs      []string `json:"snapshotIds,omitempty"`
+		Bytes            int64    `json:"bytes,omitempty"`
+		// ParentCheckpointID names the checkpoint this one is a delta over.
+		ParentCheckpointID string            `json:"parentCheckpointId,omitempty"`
+		UniqueBytes        int64             `json:"uniqueBytes,omitempty"`
+		ApparentBytes      int64             `json:"apparentBytes,omitempty"`
+		Direct             bool              `json:"direct,omitempty"`
+		Strategy           string            `json:"strategy,omitempty"`
+		NoReboot           bool              `json:"noReboot,omitempty"`
+		Metadata           map[string]string `json:"metadata,omitempty"`
 	} `json:"native,omitempty"`
 	Repo struct {
 		Root      string `json:"root,omitempty"`

@@ -88,7 +88,10 @@ type protocolResponse struct {
 	Message              string          `json:"message,omitempty"`
 	Error                string          `json:"error,omitempty"`
 	CheckpointID         string          `json:"checkpointId,omitempty"`
+	ParentCheckpointID   string          `json:"parentCheckpointId,omitempty"`
 	Bytes                int64           `json:"bytes,omitempty"`
+	UniqueBytes          int64           `json:"uniqueBytes,omitempty"`
+	ApparentBytes        int64           `json:"apparentBytes,omitempty"`
 	SynthesizedIdentity  bool            `json:"-"`
 	RawLifecycleIdentity bool            `json:"-"`
 }
