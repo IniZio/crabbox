@@ -14,6 +14,7 @@
 
 ### Fixes
 
+- Checkpoint: `crabbox checkpoint create` on a provider that restarts the guest to snapshot it (such as an external adapter that restores from its snapshot) closes its SSH master to the lease first, so the command exits 0 when the checkpoint was written instead of failing with `exit status 255`.
 - Run: stop exporting workspace-owner gate variables, including the owner token, to the remote command.
 
 ## 0.79.1 - 2026-10-20

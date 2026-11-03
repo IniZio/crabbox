@@ -424,6 +424,13 @@ func nativeCheckpointCreateDriver(cfg Config, server Server, target SSHTarget, s
 
 func (a App) createNativeCheckpointRequest(ctx context.Context, req NativeCheckpointCreateRequest) (CoordinatorImage, map[string]string, error) {
 	if provider, ok := nativeCheckpointLifecycleProvider(req.Config, req.Server); ok {
+		// The provider may restart the guest to snapshot it, which kills any
+		// master still open to it; later calls open a new one.
+		if controls := serveRelayControlsFromContext(ctx); controls != nil && req.LeaseID != "" {
+			if err := controls.dropLease(req.LeaseID); err != nil {
+				return CoordinatorImage{}, nil, NativeCheckpointNotSubmittedError{Cause: err}
+			}
+		}
 		result, err := provider.CreateNativeCheckpoint(ctx, req)
 		image := coordinatorImageFromNativeCheckpoint(result.Image)
 		image.captureEstablished = err == nil && result.CaptureEstablished
