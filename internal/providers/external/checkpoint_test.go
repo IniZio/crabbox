@@ -98,6 +98,34 @@ func TestCheckpointCreateSendsLeaseCheckpointAndName(t *testing.T) {
 	}
 }
 
+func TestCheckpointCreateReportsParentAndSizesWhenTheAdapterDoes(t *testing.T) {
+	cfg, _ := checkpointAdapter(t, true, `printf '%s' '{"protocolVersion":1,"checkpointId":"`+testCheckpointID+`","parentCheckpointId":"chk_parent","bytes":4096,"uniqueBytes":4096,"apparentBytes":8192}'`)
+	result, err := (Provider{}).CreateNativeCheckpoint(context.Background(), core.NativeCheckpointCreateRequest{
+		Config: cfg, CheckpointID: testCheckpointID, LeaseID: "cbx_abcdef123456",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := result.Image
+	if image.ParentCheckpointID != "chk_parent" || image.UniqueBytes != 4096 || image.ApparentBytes != 8192 || image.Bytes != 4096 {
+		t.Fatalf("image=%#v", image)
+	}
+}
+
+func TestCheckpointCreateLeavesParentAndSizesUnsetWhenTheAdapterOmitsThem(t *testing.T) {
+	cfg, _ := checkpointAdapter(t, true, `printf '%s' '{"protocolVersion":1,"checkpointId":"`+testCheckpointID+`","bytes":4096}'`)
+	result, err := (Provider{}).CreateNativeCheckpoint(context.Background(), core.NativeCheckpointCreateRequest{
+		Config: cfg, CheckpointID: testCheckpointID, LeaseID: "cbx_abcdef123456",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := result.Image
+	if image.ParentCheckpointID != "" || image.UniqueBytes != 0 || image.ApparentBytes != 0 {
+		t.Fatalf("image=%#v", image)
+	}
+}
+
 func TestCheckpointCreateRejectsChangedIdentity(t *testing.T) {
 	cfg, _ := checkpointAdapter(t, true, `printf '%s' '{"protocolVersion":1,"checkpointId":"chk_ffffffffffffffff","bytes":1}'`)
 	_, err := (Provider{}).CreateNativeCheckpoint(context.Background(), core.NativeCheckpointCreateRequest{

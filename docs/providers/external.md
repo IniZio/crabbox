@@ -741,6 +741,18 @@ records as `native.bytes`. A different `checkpointId` fails the create:
 {"protocolVersion": 1, "checkpointId": "chk_0123456789abcdef", "bytes": 1073741824}
 ```
 
+An adapter that stores a checkpoint as a delta over another one may also
+report `parentCheckpointId`, the checkpoint it is a delta over, `uniqueBytes`,
+the space only this checkpoint holds, and `apparentBytes`, its size before
+sharing. Crabbox records them as `native.parentCheckpointId`,
+`native.uniqueBytes` and `native.apparentBytes`, and leaves them out when the
+adapter does not report them. A checkpoint over the base image has no
+`parentCheckpointId`.
+
+```json
+{"protocolVersion": 1, "checkpointId": "chk_0123456789abcdef", "parentCheckpointId": "chk_fedcba9876543210", "bytes": 1048576, "uniqueBytes": 1048576, "apparentBytes": 1073741824}
+```
+
 `checkpointFork` is an `acquire` request with the same `desired`, `keep`,
 `reclaim`, and `repo` fields plus the `checkpointId` to start from. Answer it
 exactly like `acquire`: the new lease has a fresh identity from `desired`, and

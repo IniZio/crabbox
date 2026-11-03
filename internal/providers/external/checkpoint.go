@@ -55,6 +55,7 @@ func (p Provider) CreateNativeCheckpoint(ctx context.Context, req core.NativeChe
 	result.Image = core.NativeCheckpointImage{
 		ID: req.CheckpointID, Name: req.Name, State: "available", Provider: providerName,
 		Kind: core.CheckpointKindExternal, ResourceID: req.CheckpointID, Bytes: response.Bytes, Direct: true,
+		ParentCheckpointID: strings.TrimSpace(response.ParentCheckpointID), UniqueBytes: response.UniqueBytes, ApparentBytes: response.ApparentBytes,
 	}
 	result.CaptureEstablished = true
 	return result, nil
