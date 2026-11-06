@@ -106,7 +106,8 @@ type protocolLease struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 	SSH        *protocolSSH      `json:"ssh,omitempty"`
 
-	HostMemoryMiB *int `json:"hostMemoryMiB,omitempty"`
+	HostMemoryMiB   *int `json:"hostMemoryMiB,omitempty"`
+	ResumeMemoryMiB *int `json:"resumeMemoryMiB,omitempty"`
 
 	CacheVolumes []cacheVolumeEcho `json:"cacheVolumes,omitempty"`
 }
@@ -212,7 +213,8 @@ func (p protocolLease) target(cfg core.Config, keep bool) core.LeaseTarget {
 		Status:   status,
 		Labels:   labels,
 
-		HostMemoryMiB: p.HostMemoryMiB,
+		HostMemoryMiB:   p.HostMemoryMiB,
+		ResumeMemoryMiB: p.ResumeMemoryMiB,
 	}
 	server.ServerType.Name = core.Blank(p.ServerType, "external")
 	target := core.SSHTarget{TargetOS: core.Blank(cfg.TargetOS, core.TargetLinux), WindowsMode: cfg.WindowsMode, NetworkKind: core.NetworkPublic}
