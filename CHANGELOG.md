@@ -5,7 +5,7 @@
 ### Changes
 
 - Tunnel: add `crabbox tunnel --reverse <boxport>:<hostport>` to expose a host loopback port on the Box's loopback, with `--json` readiness output.
-- External provider: `crabbox list --json` forwards the optional `hostMemoryMiB` that adapters report on lease rows.
+- External provider: `crabbox list --json` forwards the optional `hostMemoryMiB` that adapters report on lease rows, and the optional `resumeMemoryMiB` a suspended lease takes to resume.
 - External provider: native `crabbox checkpoint create/fork/delete` through the `checkpointCreate`, `checkpointFork` and `checkpointDelete` protocol operations, opted in with `external.capabilities.checkpoints`; checkpoint records report the adapter-reported size as `native.bytes`.
 - Warmup: add provider-neutral `--egress-allow` (`CRABBOX_EGRESS_ALLOW`) mapped to the allow-list of providers that enforce one; providers that cannot enforce one reject it.
 - Stop: add `--delete` to delete instead of pausing or retaining the box on providers that keep released boxes.
