@@ -30,6 +30,7 @@ type protocolRequest struct {
 	All                     bool                              `json:"all,omitempty"`
 	Refresh                 bool                              `json:"refresh,omitempty"`
 	DryRun                  bool                              `json:"dryRun,omitempty"`
+	PublishCaches           bool                              `json:"publishCaches,omitempty"`
 	Repo                    *protocolRepo                     `json:"repo,omitempty"`
 	SkipSSHOutputValidation bool                              `json:"-"`
 }

@@ -359,6 +359,7 @@ type ExternalCapabilitiesConfig struct {
 	IdempotentLeaseID bool `yaml:"idempotentLeaseId,omitempty" json:"idempotentLeaseId,omitempty"`
 	PauseResume       bool `yaml:"pauseResume,omitempty" json:"pauseResume,omitempty"`
 	CacheVolumes      bool `yaml:"cacheVolumes,omitempty" json:"cacheVolumes,omitempty"`
+	CacheSaveOnPause  bool `yaml:"cacheSaveOnPause,omitempty" json:"cacheSaveOnPause,omitempty"`
 	Checkpoints       bool `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
 }
 
@@ -3303,6 +3304,7 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 		}
 		pauseResume := cfg.External.Capabilities.PauseResume
 		cacheVolumes := cfg.External.Capabilities.CacheVolumes
+		cacheSaveOnPause := cfg.External.Capabilities.CacheSaveOnPause
 		checkpoints := cfg.External.Capabilities.Checkpoints
 		if applyOptional(&cfg.External.Capabilities, file.External.Capabilities) {
 			if !trusted {
@@ -3310,6 +3312,7 @@ func applyFileConfigWithTrustAndProviderSource(cfg *Config, file fileConfig, tru
 				// hand repo-chosen paths to the adapter, so only user config may opt in.
 				cfg.External.Capabilities.PauseResume = pauseResume
 				cfg.External.Capabilities.CacheVolumes = cacheVolumes
+				cfg.External.Capabilities.CacheSaveOnPause = cacheSaveOnPause
 				cfg.External.Capabilities.Checkpoints = checkpoints
 			}
 			recordConfigInput(cfg, "external", inputSource, true)
