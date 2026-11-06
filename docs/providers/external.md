@@ -159,6 +159,15 @@ volumes are not sent and a `required` volume fails early with
 `provider=external does not support required cache volume`. It has no effect with
 a declarative `external.lifecycle`, and it does not change the local claim scope.
 
+`external.capabilities.cacheSaveOnPause` says the adapter can save a lease's
+cache volumes at a pause. Set it only in trusted user config, like
+`pauseResume`. With it, `crabbox providers --json --configured` lists
+`cache-save-on-pause` for `external`, and `crabbox pause` with
+`CRABBOX_PAUSE_PUBLISH=1` in its environment sends `"publishCaches": true` in the
+`pause` request. Without the capability or the variable the field is omitted, and
+an adapter must treat an omitted field as false. It does not change the local
+claim scope.
+
 `external.capabilities.checkpoints` enables native
 [checkpoints](../commands/checkpoint.md) through the `checkpointCreate`,
 `checkpointFork`, and `checkpointDelete` protocol operations described under

@@ -38,6 +38,26 @@ func registerConfiguredCacheVolumeTestProvider(t *testing.T) string {
 	return provider.Spec().Name
 }
 
+func TestExternalCacheSaveOnPauseCapabilityRequiresTrustedConfig(t *testing.T) {
+	var file fileConfig
+	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    cacheSaveOnPause: true\n"), &file); err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseConfig()
+	if err := applyFileConfigWithTrust(&cfg, file, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.External.Capabilities.CacheSaveOnPause {
+		t.Fatal("repository config enabled cacheSaveOnPause")
+	}
+	if err := applyFileConfigWithTrust(&cfg, file, true); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.External.Capabilities.CacheSaveOnPause {
+		t.Fatal("trusted config did not enable cacheSaveOnPause")
+	}
+}
+
 func TestExternalCacheVolumesCapabilityRequiresTrustedConfig(t *testing.T) {
 	var file fileConfig
 	if err := yaml.Unmarshal([]byte("external:\n  capabilities:\n    cacheVolumes: true\n"), &file); err != nil {

@@ -3,26 +3,33 @@ package external
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	core "github.com/openclaw/crabbox/internal/cli"
 )
 
-const stderrTailMaxBytes = 2048
+const (
+	stderrTailMaxBytes = 2048
+	// pausePublishEnv set to 1 asks a pause to save the lease's cache volumes.
+	pausePublishEnv = "CRABBOX_PAUSE_PUBLISH"
+)
 
 var _ core.PausableBackend = (*leaseBackend)(nil)
 
 // Pause asks an opted-in adapter to stop the lease's compute while keeping its state.
 func (b *leaseBackend) Pause(ctx context.Context, req core.PauseRequest) error {
-	return b.pauseResume(ctx, "pause", "paused", req.ID)
+	publish := b.cfg.External.Capabilities.CacheSaveOnPause && os.Getenv(pausePublishEnv) == "1"
+	return b.pauseResume(ctx, protocolRequest{Operation: "pause", PublishCaches: publish}, "paused", req.ID)
 }
 
 // Resume asks an opted-in adapter to start a paused lease again.
 func (b *leaseBackend) Resume(ctx context.Context, req core.ResumeRequest) error {
-	return b.pauseResume(ctx, "resume", "resumed", req.ID)
+	return b.pauseResume(ctx, protocolRequest{Operation: "resume"}, "resumed", req.ID)
 }
 
-func (b *leaseBackend) pauseResume(ctx context.Context, op, done, id string) error {
+func (b *leaseBackend) pauseResume(ctx context.Context, request protocolRequest, done, id string) error {
+	op := request.Operation
 	if !b.cfg.External.Capabilities.PauseResume || lifecycleConfigured(b.cfg.External) {
 		return core.Exit(2, "provider=%s does not support %s", providerName, op)
 	}
@@ -32,7 +39,8 @@ func (b *leaseBackend) pauseResume(ctx context.Context, op, done, id string) err
 	if err != nil {
 		return err
 	}
-	response, err := b.invoke(ctx, protocolRequest{Operation: op, Lease: leaseForProtocol(lease)})
+	request.Lease = leaseForProtocol(lease)
+	response, err := b.invoke(ctx, request)
 	if err != nil {
 		return err
 	}

@@ -862,9 +862,10 @@ func externalControllerScope(cfg core.Config) (string, error) {
 	}
 	if cfg.External.Capabilities.IdempotentLeaseID {
 		capabilities := cfg.External.Capabilities
-		// pauseResume, cacheVolumes and checkpoints only gate optional behavior; toggling them must not orphan existing claims.
+		// pauseResume, the cache capabilities and checkpoints only gate optional behavior; toggling them must not orphan existing claims.
 		capabilities.PauseResume = false
 		capabilities.CacheVolumes = false
+		capabilities.CacheSaveOnPause = false
 		capabilities.Checkpoints = false
 		scope.Capabilities = &capabilities
 	}
